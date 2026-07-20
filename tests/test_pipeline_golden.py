@@ -1,9 +1,11 @@
-"""Golden-path invariant tests against real photos (map0.jpg, map2.jpg).
+"""Golden-path invariant tests against real photos (config.MANUAL_KP_COUNTS
+files: map0.jpg, map2.jpg, map4.jpg, map6.jpg).
 
 Not exact-match: there is no labeled ground truth for these photos (see
 plan's testing section), so these assert sanity invariants and a comparison
 against a *manually counted* control baseline (config.MANUAL_KP_COUNTS --
-one observer, not audited data). Treat this as a regression guard, not an
+one observer, not audited data; map4.jpg/map6.jpg's counts are weaker still,
+see that constant's docstring). Treat this as a regression guard, not an
 accuracy metric.
 """
 
@@ -19,7 +21,7 @@ from pipeline.preprocessing import preprocess_image
 from pipeline.segmentation import default_valid_mask, segment_terrain
 
 TESTDATA = os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))), "testData")
-GOLDEN_FILES = ["map0.jpg", "map2.jpg"]
+GOLDEN_FILES = list(MANUAL_KP_COUNTS)
 
 
 @pytest.fixture(scope="module", params=GOLDEN_FILES)

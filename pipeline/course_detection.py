@@ -10,7 +10,10 @@ plan's Context section for the full finding.
 
 from __future__ import annotations
 
+import re
+import shutil
 from dataclasses import dataclass, field
+from pathlib import Path
 
 import cv2
 import numpy as np
@@ -22,6 +25,14 @@ try:
     import pytesseract
 except ImportError:  # pragma: no cover
     pytesseract = None
+
+if pytesseract is not None and shutil.which("tesseract") is None:
+    # PATH may not include the install dir in every process/session even
+    # though the binary is present (verified locally: winget installs it
+    # here but doesn't broadcast the PATH update to already-running shells).
+    _default_win_install = Path(r"C:\Program Files\Tesseract-OCR\tesseract.exe")
+    if _default_win_install.exists():
+        pytesseract.pytesseract.tesseract_cmd = str(_default_win_install)
 
 
 @dataclass
@@ -183,32 +194,57 @@ def detect_legs(mask: np.ndarray, exclude_disks: list[Control], start: tuple[flo
     return out
 
 
-def ocr_control_code(img: np.ndarray, control: Control) -> str | None:
+_CODE_PATTERN = re.compile(r"\d{1,2}-\d{1,3}")
+
+
+def ocr_control_code(img: np.ndarray, control: Control, ink_mask: np.ndarray) -> str | None:
     """OCR the control-code text printed next to a control circle (e.g. the
     "46" in a "7-46" label). Best-effort: requires the Tesseract-OCR binary
-    installed separately (pytesseract only binds to it, see plan) -- returns
-    None rather than raising if it's unavailable or nothing legible is found,
+    installed separately (pytesseract only binds to it) -- returns None
+    rather than raising if it's unavailable or nothing legible is found,
     since this must never fabricate a code that wasn't actually read.
+
+    OCRs the course-ink *mask* within a generous window around the circle,
+    not the raw photo -- course setters place the code label in whichever
+    of the 4 quadrants around the circle has free space (not a fixed
+    offset), and OCRing the raw grayscale crop picks up contour lines and
+    vegetation-boundary ink as false text. Restricting to ink-mask pixels
+    (with the circle itself blanked out as a filled disk, since Hough's
+    radius estimate is noisy enough that a thin ring mask can miss part of
+    the real printed circle) cuts that noise down enough for --psm 11
+    (sparse text) to isolate the digit-dash label. Checked directly against
+    map0.jpg's golden-path photo: this raised the legible-code yield from
+    1/17 controls (old fixed-offset raw-grayscale crop) to ~9/17 -- real
+    photos are noisy enough that recovering roughly half is the realistic
+    best-effort bar here, not full coverage.
     """
     if pytesseract is None:
         return None
     r = control.radius
-    x0 = max(0, int(control.x - r * 4))
-    x1 = min(img.shape[1], int(control.x + r * 4))
-    y0 = max(0, int(control.y - r * 2.5))
-    y1 = min(img.shape[0], int(control.y + r * 2.5))
-    roi = img[y0:y1, x0:x1]
-    if roi.size == 0:
+    h, w = img.shape[:2]
+    search = int(r * 6)
+    x0, x1 = max(0, int(control.x - search)), min(w, int(control.x + search))
+    y0, y1 = max(0, int(control.y - search)), min(h, int(control.y + search))
+    roi_mask = ink_mask[y0:y1, x0:x1].copy()
+    if roi_mask.size == 0:
         return None
-    gray = cv2.cvtColor(roi, cv2.COLOR_BGR2GRAY)
-    gray = cv2.resize(gray, None, fx=3, fy=3, interpolation=cv2.INTER_CUBIC)
-    _thresh, binary = cv2.threshold(gray, 0, 255, cv2.THRESH_BINARY + cv2.THRESH_OTSU)
+    cv2.circle(roi_mask, (int(control.x - x0), int(control.y - y0)), int(r * 1.6), False, thickness=-1)
+    binary = np.where(roi_mask, 0, 255).astype(np.uint8)
+    binary = cv2.resize(binary, None, fx=3, fy=3, interpolation=cv2.INTER_NEAREST)
+    binary = cv2.medianBlur(binary, 3)
     try:
-        text = pytesseract.image_to_string(binary, config="--psm 7 -c tessedit_char_whitelist=0123456789-")
+        data = pytesseract.image_to_data(
+            binary, config="--psm 11 -c tessedit_char_whitelist=0123456789-",
+            output_type=pytesseract.Output.DICT,
+        )
     except Exception:
         return None
-    text = text.strip()
-    return text or None
+    best_code, best_conf = None, -1.0
+    for text, conf in zip(data["text"], data["conf"]):
+        match = _CODE_PATTERN.search(text.strip())
+        if match and float(conf) > best_conf:
+            best_code, best_conf = match.group(0), float(conf)
+    return best_code
 
 
 def detect_course(
@@ -223,6 +259,6 @@ def detect_course(
 
     if run_ocr:
         for c in controls:
-            c.code = ocr_control_code(img, c)
+            c.code = ocr_control_code(img, c, mask)
 
     return CourseResult(controls=controls, start=start, finish=finish, legs=legs, ink_mask=mask)

@@ -43,9 +43,11 @@ one genre is targeted by the current pipeline:
   buildings dominate, wrong taxonomy), `map7.jpg`/`map8.jpg` (1:15000–1:17500 rogaine topo-base maps —
   also wrong taxonomy). If asked to extend the pipeline to these, that's a scope change to raise, not
   assume.
-- `map0.jpg` and `map2.jpg` are the two "golden path" files with a manually-counted control baseline
-  (`config.MANUAL_KP_COUNTS`); `map4.jpg`/`map6.jpg` have no such baseline — treat their output as
-  unverified/best-effort.
+- All four in-scope files have a manually-counted control baseline now (`config.MANUAL_KP_COUNTS`).
+  `map0.jpg`/`map2.jpg` are still the stronger "golden path" pair — counted from each photo's own printed
+  control-description grid; `map4.jpg`/`map6.jpg`'s counts were counted by tiling the raw photo and eyeballing
+  printed circle+code labels (no such grid visible in frame for those two), a weaker form of "manual" more
+  prone to miscounting — see `MANUAL_KP_COUNTS`'s docstring in `config.py`.
 
 ## Commands
 
@@ -69,9 +71,37 @@ Run the pipeline on one photo (writes `output/<name>.geojson` + `output/<name>_q
 .venv/Scripts/python.exe scripts/run_pipeline.py testData/map0.jpg --no-ocr --out-dir output
 ```
 
-`--no-ocr` skips control-code OCR — use it by default when testing/iterating, since the **Tesseract-OCR
-binary is not installed on this machine** (`pytesseract` only binds to it; OCR calls fail gracefully and
-return `None`, they don't crash, but there's no point paying for the attempt without the binary).
+`--no-ocr` skips control-code OCR — useful to save the ~0.3s/control OCR cost when iterating on something
+unrelated. The **Tesseract-OCR binary** (`pytesseract` only binds to it) is installed via winget
+(`UB-Mannheim.TesseractOCR`) at `C:\Program Files\Tesseract-OCR\tesseract.exe`;
+`pipeline/course_detection.py` points `pytesseract` at that path directly as a fallback in case a given
+process's `PATH` hasn't picked up the winget install (verified locally: it doesn't propagate to
+already-running shells). If the binary is genuinely missing, OCR calls still fail gracefully and return
+`None` rather than crash. Even with the binary present, treat control codes as **best-effort, not
+reliable** — `ocr_control_code` OCRs the course-ink mask (not the raw photo) in a window around each
+circle to cut out contour-line/vegetation noise. Current yield (all four in-scope photos, checked
+directly): map0.jpg ~9/17, map6.jpg ~6/9, map4.jpg ~3/17, map2.jpg ~0/9.
+
+The single biggest lever here turned out to be *global page orientation*, not anything OCR-specific: three
+of the four in-scope photos (`config.PAGE_ROTATION_K`) come out of `rectify()` rotated 90 degrees off
+reading orientation, because `find_paper_quad`'s corner-ordering has no way to know which corner of the
+paper is physically "top" -- confirmed directly by reading each file's title block at all 4 multiples of
+90 degrees (see `preprocessing.correct_reading_rotation`'s docstring). Before that rotation was corrected,
+Tesseract couldn't read text on those files *at all*, no matter how clean the underlying ink was --
+verified directly, a manually-rotated crop of map4.jpg's course-code text OCR'd perfectly at the correct
+angle and failed completely at the photo's original (uncorrected) angle. Correcting it is what took
+map4.jpg/map6.jpg from ~0/N to their current yield.
+
+What's left after that fix is a second, different problem: even with text right-side-up, Tesseract's own
+layout analysis (`--psm 11`) still gets confused when a label sits close to several crossing leg lines --
+verified directly on map2.jpg, whose labels are upright and legible to the eye in the ink-mask crop but
+still OCR to garbage, because the surrounding line clutter gets segmented as competing "text" regions.
+Decluttering by dropping large connected components (probable leg lines) before OCR did not fix this on
+its own. Reliably solving it would need per-label text-region isolation tight enough to exclude the
+clutter entirely, which was attempted (component-clustering by bounding-box size) and measured no better
+than doing nothing -- same story as the abandoned radius-consistency filter in `detect_controls`'s
+docstring: don't re-attempt that specific approach without new evidence for *why* it would work better
+next time.
 
 Run the whole test suite / a single test:
 
@@ -107,15 +137,27 @@ preprocessing.preprocess_image(path)
    paper). If the resulting quad covers <85% of the hull's area, that's treated as the same failure mode
    and it falls back to `cv2.minAreaRect` of the hull instead (safe-but-loose over precise-but-wrong).
 3. `rectify` — perspective warp to that quad.
-4. `white_balance` — percentile white-patch balance using the photo's own brightest pixels (the paper
+4. `correct_reading_rotation` — rotates the rectified image by a per-file multiple of 90 degrees
+   (`config.PAGE_ROTATION_K`) so it's in reading orientation (title text horizontal, upright).
+   `find_paper_quad`'s corner-ordering picks a consistent (tl, tr, br, bl) labeling for whatever quad it
+   finds, but nothing in the photo tells it which physical corner is "top" — checked directly by cropping
+   each in-scope file's title block and reading it at all 4 rotations: `map0.jpg` needs none, `map2.jpg`
+   comes out 90 degrees clockwise of reading orientation, `map4.jpg`/`map6.jpg` both come out 90 degrees
+   the *other* way. Not just cosmetic: this must run before step 5 (near-vertical-only) and before any
+   OCR, and is a hardcoded per-file lookup, not automatic detection — an automatic rotation-scoring
+   detector was tried (OCR confidence across all 4 rotations, both whole-image and on the largest
+   near-white margin region) and wasn't reliable enough to trust, so this is hand-calibrated the same way
+   `LEGEND_EXCLUDE_BOXES`/`HOUGH_PARAM2` already are.
+5. `white_balance` — percentile white-patch balance using the photo's own brightest pixels (the paper
    margin) as the white reference. Not optional/cosmetic: these photos carry a real, per-photo color cast
    (checked directly — one photo's "white" paper background measured BGR (185, 196, 217), ~30 points off
    neutral on blue) that otherwise pushes ordinary map browns into the course-ink hue range.
-5. `detect_magnetic_north_lines` — best-effort only. Deliberately does *not* search for line families at
+6. `detect_magnetic_north_lines` — best-effort only. Deliberately does *not* search for line families at
    arbitrary angles (a version of this that did was more likely to lock onto a spurious diagonal pattern
    and mis-rotate an already-correct image than to find the real lines) — it only looks near-vertical,
-   post-rectification. Frequently returns nothing on real photos (thin printed lines get constantly broken
-   up by other map content); nothing downstream depends on it succeeding.
+   which is only a safe assumption because step 4 already fixed reading orientation. Frequently returns
+   nothing on real photos (thin printed lines get constantly broken up by other map content); nothing
+   downstream depends on it succeeding.
 
 **`segmentation.py`** — rectified image → draft terrain polygons (`config.TERRAIN_CLASSES`, one shapely
 polygon list per class) + path `LineString`s. Order of operations matters: water (blue hue) and
@@ -141,11 +183,14 @@ everything downstream classifies by *shape* (circle via `HoughCircles`, triangle
 `detect_controls`'s Hough accumulator threshold (`param2`) does **not generalize across photos** — one
 photo's course-ink mask is measurably noisier than another's, so a threshold tuned against one file's
 manually-counted baseline can be off 2-4x on another. It's a per-file override
-(`config.HOUGH_PARAM2[filename]`, falling back to `HOUGH_PARAM2_DEFAULT`), calibrated only for the two
-golden-path files — don't assume it's tuned for `map4.jpg`/`map6.jpg`. A "smarter" radius-consistency
-filter (real controls share one print diameter) was tried as a way to avoid per-file tuning and measured
-*worse* in practice (Hough's radius estimates on these photos are too noisy for the mode to mean anything)
-— don't re-attempt that without new evidence.
+(`config.HOUGH_PARAM2[filename]`, falling back to `HOUGH_PARAM2_DEFAULT`); all four in-scope files are now
+calibrated (`HOUGH_PARAM2_DEFAULT` itself is still an unverified guess — don't assume it's right for a
+file that isn't in the dict). A "smarter" radius-consistency filter (real controls share one print
+diameter) was tried as a way to avoid per-file tuning and measured *worse* in practice (Hough's radius
+estimates on these photos are too noisy for the mode to mean anything) — don't re-attempt that without new
+evidence. Radius spread across a file's *accepted* detections is still a useful manual sanity check while
+calibrating, though (see `HOUGH_PARAM2`'s comment in `config.py`) — just not a filter the code applies
+automatically.
 
 **`vectorize.py`** — assembles segmentation + course results into one GeoJSON `FeatureCollection`, in the
 rectified image's own local pixel coordinates (no real-world geo-referencing — out of scope by design, see
@@ -154,10 +199,14 @@ image-convention (Y down) mislabeled as GeoJSON. Carries a non-standard top-leve
 (source photo, scale, detected line spacing) for `visualize.py` and, eventually, a Flutter renderer to
 overlay the vector data back onto the photo without distortion.
 
-**`config.py`** is where all the per-file empirical calibration lives (`LEGEND_EXCLUDE_BOXES`,
-`HOUGH_PARAM2`, `MANUAL_KP_COUNTS`) — when a photo's rectification or exclusion zones change (e.g. after a
-`preprocessing.py` fix), these need re-checking; they were hand-positioned by looking at that specific
-file's rectified/QA output, not derived from a formula.
+**`config.py`** is where all the per-file empirical calibration lives (`PAGE_ROTATION_K`,
+`LEGEND_EXCLUDE_BOXES`, `HOUGH_PARAM2`, `MANUAL_KP_COUNTS`) — when a photo's rectification or exclusion
+zones change (e.g. after a `preprocessing.py` fix), these need re-checking; they were hand-positioned by
+looking at that specific file's rectified/QA output, not derived from a formula. `PAGE_ROTATION_K` in
+particular changes the *geometry* every other per-file constant is expressed in (rotating swaps width/
+height and moves every fixed-position box) — if it ever changes for a file, `LEGEND_EXCLUDE_BOXES` and
+`HOUGH_PARAM2` for that file need re-deriving from scratch against the newly-corrected image, not adjusted
+by formula from the old ones.
 
 ## Testing
 

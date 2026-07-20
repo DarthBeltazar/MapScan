@@ -9,12 +9,13 @@ rather than raising on the happy-path assumption.
 
 from __future__ import annotations
 
+import os
 from dataclasses import dataclass
 
 import cv2
 import numpy as np
 
-from pipeline.config import WORKING_MAX_SIDE
+from pipeline.config import PAGE_ROTATION_K, WORKING_MAX_SIDE
 
 
 @dataclass
@@ -174,12 +175,55 @@ def rectify(img: np.ndarray, quad: np.ndarray) -> np.ndarray:
     return cv2.warpPerspective(img, m, (out_w, out_h))
 
 
+def correct_reading_rotation(img: np.ndarray, source_filename: str | None) -> np.ndarray:
+    """Rotate the rectified image by a multiple of 90 degrees so it's in
+    reading orientation (title text horizontal, upright).
+
+    find_paper_quad's corner-ordering picks *a* consistent (tl, tr, br, bl)
+    labeling for whatever quad it finds, but has no way to know which
+    physical corner of the paper that actually is -- there's nothing in the
+    photo that tells it "this edge is the top". The result (checked directly
+    against all 4 in-scope photos by cropping each one's title block and
+    reading it at all 4 multiples of 90 degrees) is that map0.jpg happens to
+    come out upright, but map2.jpg comes out rotated 90 degrees
+    counterclockwise from reading orientation and map4.jpg/map6.jpg both
+    come out rotated 90 degrees *clockwise* -- i.e. this isn't a single
+    global quirk with one fixed correction, each file's offset depends on
+    which corner of its own quad the heuristic happened to call "top-left".
+    Downstream code (course_detection's OCR in particular) needs this fixed:
+    Tesseract's layout analysis doesn't reliably read text at an arbitrary
+    rotation even when the underlying ink is otherwise clean (verified
+    directly: a manually-rotated crop of map4.jpg's course-code text OCRs
+    perfectly, the same crop at its original rotation does not).
+
+    This is a per-file lookup (config.PAGE_ROTATION_K), not automatic
+    detection -- an automatic detector was tried (scoring OCR confidence
+    across all 4 rotations, both on the whole image and on the largest
+    near-white margin region) and wasn't reliable enough to trust: the map
+    body has too much small dense linework that OCRs as low-confidence
+    "text" at any rotation, and a generic "find the white margin" region
+    detector didn't reliably locate the title block either. Hand-calibrating
+    per file, the same way LEGEND_EXCLUDE_BOXES and HOUGH_PARAM2 already are
+    in this Phase-0 prototype, was more reliable than a fragile automatic
+    heuristic. Unknown filenames default to no rotation (0), same as an
+    unlisted HOUGH_PARAM2 entry falling back to the default.
+    """
+    k = PAGE_ROTATION_K.get(source_filename or "", 0) % 4
+    return np.ascontiguousarray(np.rot90(img, k)) if k else img
+
+
 def _all_segments(lines: np.ndarray | None, min_len: float) -> list[tuple[float, float, float, float]]:
     """Return (angle_deg_mod_180, x_mid, y_mid, length) for every long-enough
-    HoughLinesP segment, with no angle restriction -- rectify() only aligns
-    the *paper edges* to the frame, not the map's reading orientation, so the
-    magnetic-north lines can come out horizontal just as easily as vertical
-    depending on which corner the corner-ordering heuristic called "top-left".
+    HoughLinesP segment, with no angle restriction of its own -- the caller
+    (detect_magnetic_north_lines) is the one that filters to near-vertical,
+    and it can only assume "near-vertical" is the right family to look for
+    because correct_reading_rotation runs before this and fixes the map's
+    reading orientation first. rectify() alone only aligns the *paper edges*
+    to the frame, not reading orientation -- without that rotation fix, the
+    real magnetic-north lines could come out horizontal just as easily as
+    vertical, depending on which corner find_paper_quad's corner-ordering
+    happened to call "top-left" (see PAGE_ROTATION_K's docstring for how
+    that was confirmed directly on this project's test photos).
     """
     out = []
     if lines is None:
@@ -297,6 +341,7 @@ def preprocess_image(path: str, max_side: int = WORKING_MAX_SIDE) -> PreprocessR
         rectified = small
         quad_found = False
 
+    rectified = correct_reading_rotation(rectified, os.path.basename(path))
     rectified = white_balance(rectified)
     mn_xs, mn_spacing = detect_magnetic_north_lines(rectified)
 

@@ -26,6 +26,23 @@ TERRAIN_CLASSES = (
 # returned by preprocessing.preprocess_image.
 WORKING_MAX_SIDE = 3000
 
+# Per-file reading-orientation correction: number of 90-degree
+# counterclockwise rotations (see preprocessing.correct_reading_rotation)
+# applied to the rectified image so the title text comes out horizontal and
+# upright. find_paper_quad's corner-ordering has no way to know which corner
+# of the paper is physically "top" -- checked directly by cropping each
+# file's title block and reading it at all 4 rotations: map0.jpg needs none,
+# map2.jpg needs 1 (comes out 90 degrees clockwise of reading orientation),
+# map4.jpg/map6.jpg both need 3 (90 degrees *counterclockwise* -- i.e. the
+# opposite direction from map2.jpg, not a shared global offset). All of
+# LEGEND_EXCLUDE_BOXES/HOUGH_PARAM2 below are calibrated against the
+# post-rotation image. Unlisted filenames default to 0 (no rotation).
+PAGE_ROTATION_K: dict[str, int] = {
+    "map2.jpg": 1,
+    "map4.jpg": 3,
+    "map6.jpg": 3,
+}
+
 # Per-file fractional exclude boxes (x0, y0, x1, y1), each in [0, 1] relative
 # to the *rectified working-resolution* image, covering legend tables /
 # titles / sponsor logos that would otherwise contaminate terrain-color
@@ -65,36 +82,88 @@ LEGEND_EXCLUDE_BOXES: dict[str, list[tuple[float, float, float, float]]] = {
     # -- these boxes were positioned against the *old*, wrongly-cropped
     # framing and stopped matching once that got fixed).
     "map2.jpg": [
-        (0.0, 0.0, 1.0, 0.05),
-        (0.72, 0.0, 1.0, 0.32),  # title block + KBAPK logo, top-right here
-        (0.0, 0.72, 0.42, 1.0),  # control-description grid, bottom-left here
+        # Recalibrated after adding preprocessing.correct_reading_rotation
+        # (config.PAGE_ROTATION_K): this file now gets rotated 90 degrees
+        # clockwise post-rectify so its title text reads upright, which
+        # moves every box below relative to the old (unrotated) layout --
+        # re-derived by inspecting the corrected image, not rotated by
+        # formula from the old boxes.
+        (0.0, 0.0, 1.0, 0.05),    # thin strip right along the paper's top
+        # edge -- excludes noise from the sheet's own printed border/table
+        # edge, same purpose as the equivalent strip on other files.
+        (0.0, 0.0, 0.40, 0.18),   # "2023" + round "КВАРК" club badge,
+        # top-left here.
+        (0.58, 0.48, 1.0, 0.91),  # title block + control-description grid
+        # (the "D2 3,7 km" table -- its cell borders and corner circle/
+        # triangle glyphs are exactly the kind of shapes HoughCircles and
+        # detect_start_triangle look for, so this needs excluding same as
+        # the title text does), bottom-right here.
     ],
     "map4.jpg": [
-        (0.0, 0.0, 1.0, 0.04),
-        (0.65, 0.0, 0.97, 0.32),  # title block, top-right here
-        (0.0, 0.75, 0.22, 1.0),   # bottom-left sponsor/club logo cluster
+        # Recalibrated after adding preprocessing.correct_reading_rotation
+        # (config.PAGE_ROTATION_K): this file now gets rotated 270 degrees
+        # counterclockwise post-rectify so its title text reads upright,
+        # which moves every fixed-position box below relative to the old
+        # (unrotated) layout -- these are *not* the same boxes rotated by
+        # formula, they were re-derived by inspecting the corrected image.
+        (0.12, 0.0, 0.25, 0.05),  # "75 ФИЗТЕХ" badge, top-left here (the
+        # other top-left logos -- МФТИ atom, round "КВАРК" club badge, blue
+        # running-figure icon -- are blue/black, not warm-hued, so they
+        # don't show up in build_course_ink_mask at all and don't need
+        # excluding).
+        (0.55, 0.48, 1.0, 0.80),  # title block ("M1:7500 H2,5m КВАРК-2022"),
+        # bottom-right here.
     ],
     "map6.jpg": [
-        (0.83, 0.0, 1.0, 0.55),  # title block sits along the right edge here
-        (0.0, 0.70, 0.38, 1.0),  # bottom-left sponsor/club logo cluster
+        # Recalibrated after adding preprocessing.correct_reading_rotation
+        # (config.PAGE_ROTATION_K): this file now gets rotated 270 degrees
+        # counterclockwise post-rectify so its title text reads upright,
+        # which moves every box below relative to the old (unrotated)
+        # layout -- re-derived by inspecting the corrected image, not
+        # rotated by formula from the old boxes.
+        (0.03, 0.04, 0.17, 0.12),  # "75 ЛЕТ ФИЗТЕХ" badge, top-left here
+        (0.63, 0.48, 1.0, 0.78),   # title block ("M1:7500 H2,5m КВАРК-2022"),
+        # bottom-right here.
     ],
 }
 
 # Per-file HoughCircles accumulator threshold for control-circle detection
 # (course_detection.detect_controls). No single value generalizes: checked
-# directly against map0.jpg and map2.jpg's manually-counted baselines (see
+# directly against each file's manually-counted baseline (see
 # MANUAL_KP_COUNTS below), and the same threshold that's about right for one
-# is off by 2-4x on the other -- map2.jpg's course ink mask is simply
-# cleaner/less noisy than map0.jpg's, so it needs a *lower* accumulator
-# threshold to find enough real circles while map0.jpg needs a *higher* one
-# to reject noise. HOUGH_PARAM2_DEFAULT is an unverified middle-ground guess
-# for files with no manual baseline to calibrate against (map4.jpg,
-# map6.jpg) -- expect it to be off in the same way, not a substitute for
-# actually calibrating those two.
+# is off by 2-4x on another -- each photo's course-ink mask has its own
+# amount of noise (road-symbol tan, shoreline curves, and -- before the
+# LEGEND_EXCLUDE_BOXES fix -- title-text glyphs all sit in the same warm-hue
+# band as real course ink, and HoughCircles will fit a "circle" to any of
+# them if the threshold is too permissive). map4.jpg/map6.jpg were
+# originally uncalibrated (falling back to HOUGH_PARAM2_DEFAULT=38) and it
+# showed: map4.jpg returned 32 "controls" at that threshold for a true count
+# of ~17, and map6.jpg's false circle on the "КВАРК" title text was only
+# caught after fixing that file's LEGEND_EXCLUDE_BOXES (the old box didn't
+# actually cover the title -- see above). Radius consistency across a file's
+# accepted detections is a useful *sanity check* while calibrating (real
+# controls print at one fixed diameter, so a clean run has a tight radius
+# spread and a noisy one has outliers up to 2x the rest) but is deliberately
+# not used as an automatic filter -- see detect_controls' docstring for why
+# that was tried and abandoned as a global filter.
 HOUGH_PARAM2_DEFAULT = 38
 HOUGH_PARAM2: dict[str, int] = {
     "map0.jpg": 46,  # -> 17 found vs manual count 18
-    "map2.jpg": 48,  # -> 9 found vs manual count 9 (recalibrated after fixing find_paper_quad's crop bug)
+    "map2.jpg": 44,  # -> 9 found vs manual count 9; recalibrated again (was
+    # 48) after adding PAGE_ROTATION_K, same reason as map4.jpg below -- also
+    # needed the top-border-strip exclude box restored (see
+    # LEGEND_EXCLUDE_BOXES) since without it, no single threshold separated
+    # a real 9th control from a border-noise false positive of similar
+    # accumulator strength.
+    "map4.jpg": 46,  # -> 17 found vs manual count ~17 (see MANUAL_KP_COUNTS);
+    # recalibrated (was 54) after adding PAGE_ROTATION_K -- circle shapes are
+    # rotation-invariant so this shouldn't have needed to change much, and it
+    # didn't (still a clean tight radius spread at this value), but the
+    # image-edge margin detect_controls masks out is a fraction of width/
+    # height, which swap on a 90-degree rotation, so the exact pixel margins
+    # differ slightly.
+    "map6.jpg": 42,  # -> 9 found vs manual count ~9 (see MANUAL_KP_COUNTS); stable
+    # across param2 in [38, 44], i.e. not a knife-edge fit to one value.
 }
 
 # Files this Phase-0 round targets (classic forest ISOM). Everything else in
@@ -102,10 +171,17 @@ HOUGH_PARAM2: dict[str, int] = {
 # of scope this round -- see plan's Context section for why.
 IN_SCOPE_FILES = ("map0.jpg", "map2.jpg", "map4.jpg", "map6.jpg")
 
-# Manually counted control-point baselines from the printed control-description
-# grids on each map photo (one observer, not audited ground truth -- see plan's
-# testing section). Used only as a golden-path regression invariant.
+# Manually counted control-point baselines (one observer, not audited ground
+# truth -- see plan's testing section). Used only as a golden-path
+# regression invariant. map0.jpg/map2.jpg were counted from each photo's own
+# printed control-description grid; map4.jpg/map6.jpg have no such grid
+# visible in frame, so those two were counted by tiling the raw photo into
+# overlapping crops and counting printed circle+code labels by eye -- a
+# weaker form of "manual" than the other two, more prone to miscounting a
+# label as two controls or missing one hidden behind line clutter.
 MANUAL_KP_COUNTS = {
     "map0.jpg": 18,
     "map2.jpg": 9,
+    "map4.jpg": 17,
+    "map6.jpg": 9,
 }
