@@ -19,7 +19,12 @@ import cv2
 import numpy as np
 from shapely.geometry import LineString
 
-from pipeline.config import HOUGH_PARAM2, HOUGH_PARAM2_DEFAULT
+from pipeline.config import (
+    HOUGH_PARAM2,
+    HOUGH_PARAM2_DEFAULT,
+    START_TRIANGLE_AREA_RATIO_RANGE,
+    START_TRIANGLE_MIN_EQUILATERAL_SCORE,
+)
 
 try:
     import pytesseract
@@ -134,20 +139,79 @@ def _dedupe_finish(controls: list[Control], dist_tol_frac: float = 0.5) -> tuple
 
 
 def detect_start_triangle(mask: np.ndarray, exclude_disks: list[Control]) -> tuple[float, float] | None:
-    """Start is a triangle (not a circle) in the same ink. Search connected
+    """Start is a triangle (not a circle) in the same ink. Searches connected
     components of the ink mask, excluding pixels already claimed by a
     detected control/finish circle, for one that approximates a 3-vertex
-    polygon with roughly equal sides."""
+    polygon with roughly equal sides *and* a size consistent with this
+    file's own detected control-circle scale (config.START_TRIANGLE_*).
+
+    This reliably returns None on every in-scope photo as of this writing --
+    that's the honest, checked-directly result, not a bug to chase. Five
+    separate approaches were tried to make this actually find the real
+    triangle, and all five failed for concrete, verified reasons:
+
+    1. The original version of this function (no size gate, equilateral
+       threshold 0.6) does return *a* 3-vertex contour, but cropping the
+       photo at its reported coordinates shows plain terrain, no triangle
+       ink -- it's noise. The "triangles" it accepts are 30-220px^2 (a real
+       triangle at these files' print scale should be ~2000-4000px^2, per
+       START_TRIANGLE_AREA_RATIO_RANGE's comment) with visibly skewed sides
+       (e.g. 44.7/25.7/23.6px) that the old 0.6 threshold didn't reject.
+    2. Recalibrating the warm-hue mask tighter, using HSV sampled directly
+       from this file's own confirmed control-circle ink as the reference:
+       no improvement. Sampled real ring ink and known false positives
+       (a printed road, a contour-line tangle, a sponsor logo) side by side
+       -- their HSV percentiles are statistically indistinguishable (e.g.
+       H median 7 vs 8-17, S median 116-140 vs 68-127 across all three,
+       heavily overlapping). These elements are printed in genuinely similar
+       red/brown ink families; no threshold separates them by color.
+    3. Local illumination flattening (dividing by a heavily-blurred copy per
+       channel, the document-scanner "remove shading/vignette" trick) before
+       re-sampling: same result, no separation opens up. This rules out
+       "it's just a bad white balance" -- the confusion is in the printed
+       ink colors themselves, not photo lighting quality.
+    4. Comparing local stroke thickness (2x distance-transform) of confirmed
+       control-ring ink against the rest of the mask: medians match (4px
+       both) -- course lines and contour/road lines print at the same
+       weight on these maps, no thickness signal either.
+    5. Rotation-invariant template matching (a synthetic hollow triangle at
+       the expected size, tested at 15-degree steps): found a strong,
+       120-degree-symmetric peak -- genuinely promising until the matched
+       location was cropped. It was a straight course leg crossing a
+       V-shaped kink in an out-of-bounds/area-boundary line, not a triangle;
+       every top candidate was the same kind of incidental line crossing.
+
+    Manually scanning the full rectified photo (including a saturation-
+    boosted crop and every config.LEGEND_EXCLUDE_BOXES region, in case the
+    triangle was hidden under a hand-excluded logo box) didn't turn up an
+    obvious separate triangle mark either. Conclusion: on these photos, at
+    this resolution, the real start triangle is not reliably distinguishable
+    from ordinary map linework by color, shape, size, thickness, or template
+    matching -- reaching it would need a fundamentally different approach
+    (e.g. a trained symbol classifier), which is Phase-3 ML-segmentation
+    territory, not a Phase-0 CV heuristic. Don't re-attempt any of the five
+    approaches above without new evidence for why they'd work differently
+    next time (see plan's guidance on this pattern, also applied to the
+    abandoned OCR-declutter and radius-consistency-filter attempts).
+    """
     work = mask.copy()
     for c in exclude_disks:
         cv2.circle(work, (int(c.x), int(c.y)), int(c.radius * 1.4), 0, thickness=-1)
     mask_u8 = (work.astype(np.uint8)) * 255
     contours, _ = cv2.findContours(mask_u8, cv2.RETR_EXTERNAL, cv2.CHAIN_APPROX_SIMPLE)
+
+    if not exclude_disks:
+        return None  # no controls detected to calibrate the expected triangle size against
+
+    median_circle_area = float(np.median([np.pi * c.radius ** 2 for c in exclude_disks]))
+    min_area = START_TRIANGLE_AREA_RATIO_RANGE[0] * median_circle_area
+    max_area = START_TRIANGLE_AREA_RATIO_RANGE[1] * median_circle_area
+
     best = None
     best_score = -1.0
     for c in contours:
         area = cv2.contourArea(c)
-        if area < 30:
+        if area < min_area or area > max_area:
             continue
         peri = cv2.arcLength(c, True)
         approx = cv2.approxPolyDP(c, 0.04 * peri, True)
@@ -159,7 +223,7 @@ def detect_start_triangle(mask: np.ndarray, exclude_disks: list[Control]) -> tup
         if equilateral > best_score:
             best_score = equilateral
             best = pts.mean(axis=0)
-    if best is None or best_score < 0.6:
+    if best is None or best_score < START_TRIANGLE_MIN_EQUILATERAL_SCORE:
         return None
     return float(best[0]), float(best[1])
 

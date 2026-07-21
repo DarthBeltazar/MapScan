@@ -185,3 +185,62 @@ MANUAL_KP_COUNTS = {
     "map4.jpg": 17,
     "map6.jpg": 9,
 }
+
+# --- Phase-0 cost-grid / path-finding (prompt.txt phase 0: prove
+# "segmentation -> cost-grid -> path" works end to end) ---
+
+# Relative traversal cost per unit distance, by terrain class (lower = a
+# runner crosses it faster). These are a *qualitative* ISOM-convention
+# ordering -- path fastest, then clearing, then forest, then rock, then
+# thicket, with water/out-of-bounds treated as strongly avoided -- not a
+# measured running-speed model. No field data exists to calibrate real speeds
+# against (see plan's note on not fabricating validated numbers), so these
+# values only need to get the *ordering* right for the pathfinder to prefer
+# runnable terrain; don't read them as calibrated m/s figures.
+TERRAIN_COST = {
+    "path": 0.8,
+    "clearing": 1.0,
+    "forest": 1.5,
+    "rock": 2.5,
+    "thicket": 4.0,
+    "water": 20.0,
+    "out_of_bounds": 50.0,
+}
+
+# Cost for pixels not covered by any detected terrain polygon (gaps between
+# polygons, k-means clusters discarded as noise, etc). Treated as neutral
+# ("clearing"-like) rather than a barrier, since these gaps are a segmentation
+# artifact, not real terrain.
+DEFAULT_TERRAIN_COST = TERRAIN_COST["clearing"]
+
+# Cost for pixels outside the valid (paper) mask entirely. Kept finite (not
+# inf) so a start/end point landing just outside the valid mask due to
+# rectification slop doesn't make path-finding fail outright -- but high
+# enough that the router only ever crosses it when there's truly no other way.
+OUTSIDE_VALID_MASK_COST = TERRAIN_COST["out_of_bounds"]
+
+# Segmentation's path LineStrings are zero-width centerlines; this is how
+# many pixels wide to draw them into the cost grid so they actually register
+# as cheap terrain rather than being lost between grid cells.
+PATH_COST_LINE_WIDTH_PX = 3
+
+# Start-triangle acceptance gate (course_detection.detect_start_triangle).
+# Per IOF spec the triangle's side length equals the control circle's
+# diameter, so its area should be ~0.55x a control circle's area
+# (area_triangle = (sqrt(3)/4)*side^2 vs area_circle = pi*(side/2)^2). This
+# range is a wide margin around that ratio to tolerate this pipeline's own
+# noisy per-file radius estimates (see HOUGH_PARAM2's comment) -- not itself
+# a claim that 0.55 is exact. Checked directly against map0.jpg: every
+# false-positive "triangle" the unguarded shape search was accepting (noise
+# blobs 30-220px^2, vs a ~2000-4000px^2 real triangle at that file's circle
+# scale) falls far below this range and gets correctly rejected.
+START_TRIANGLE_AREA_RATIO_RANGE = (0.25, 1.3)
+
+# Equilateral-ness threshold (1.0 - side_length_std/mean; see
+# detect_start_triangle) for a candidate contour to be accepted as the start
+# triangle. Raised from an earlier 0.6 after checking directly: on map0.jpg
+# the false positives the old threshold accepted scored 0.65-0.78 despite
+# being visibly non-equilateral by eye (e.g. sides 44.7/25.7/23.6px) once
+# their contours were cropped and inspected -- 0.6 wasn't discriminating
+# shape at all, just letting the size gate above do all the work.
+START_TRIANGLE_MIN_EQUILATERAL_SCORE = 0.85

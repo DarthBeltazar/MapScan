@@ -21,10 +21,18 @@ Key facts from `prompt.txt` that matter when working in *this* repo:
 - The internal map format is a **GeoJSON-like structure** (polygons for terrain classes + points for
   controls). `.omap`/`.ocd` (OpenOrienteeringMapper/OCAD) are a separate, unbuilt *input* bypass path for
   already-digitized maps — not something this pipeline generates.
-- **Don't skip ahead by phase.** Phase 0 stops at "photo → vector map"; cost-grid and path-finding
-  (Dijkstra/A* → later Fast Marching Method) are the *next* phase and are not implemented in this repo yet.
-  Don't pull later-phase work (ML segmentation, live GPS, Fast Marching) into a phase-0 task "while you're
-  at it."
+- **Phase 0 is now complete**: photo → vector map → cost-grid → a demo least-cost route, proving the
+  "segmentation → cost-grid → path" chain end to end (`pipeline/cost_grid.py`, `pipeline/pathfinding.py`).
+  **Don't skip ahead by phase** past this: Fast Marching Method, slope-aware cost from horizontals, live
+  GPS, and ML segmentation are later phases (1-4) — don't pull that work into a phase-0 task "while you're
+  at it." Note the demo route is a **connectivity proof, not real course routing** — there's no
+  control-sequencing/course-graph yet (`course_detection.CourseResult.controls` is an unordered list), so
+  `run_pipeline.py` demos "start → nearest control" when a start is found, or the first two detected
+  controls otherwise — which in practice is *always* the fallback right now, since `detect_start_triangle`
+  reliably returns `None` on all four in-scope photos (a real, checked-directly limitation, not a bug — see
+  its docstring and the `course_detection.py` section below before trying to "fix" it again).
+  Building a real ordered multi-leg course route needs the manual-correction UI that's explicitly Phase 1
+  scope, since automatic control-sequencing from a photo alone isn't reliable enough to trust un-corrected.
 - **No labeled ground truth exists** for the sample photos in `testData/` — don't fabricate accuracy
   numbers or synthetic "ground truth" to make something look validated. Quality is judged by the QA
   overlay PNGs (visual) and a couple of manually-counted control baselines (`config.MANUAL_KP_COUNTS`),
@@ -121,6 +129,8 @@ preprocessing.preprocess_image(path)
   → segmentation.default_valid_mask()  (legend/title exclusion from config.LEGEND_EXCLUDE_BOXES)
   → course_detection.detect_course()   (needs source_filename for config.HOUGH_PARAM2 lookup)
   → segmentation.segment_terrain()     (masked to exclude course ink so it isn't read as terrain fill)
+  → cost_grid.build_cost_grid()        (terrain polygons + paths -> per-pixel traversal cost, config.TERRAIN_COST)
+  → pathfinding.find_route()           (skimage.graph.route_through_array between a demo pair of points)
   → vectorize.build_feature_collection()  → output/<name>.geojson
   → visualize.render_qa_overlay()         → output/<name>_qa.png
 ```
@@ -192,12 +202,57 @@ evidence. Radius spread across a file's *accepted* detections is still a useful 
 calibrating, though (see `HOUGH_PARAM2`'s comment in `config.py`) — just not a filter the code applies
 automatically.
 
+`detect_start_triangle` reliably returns `None` on all four in-scope photos, and that's the correct,
+checked-directly answer, not a bug — see its docstring for the full account. Five separate approaches to
+actually finding the real start triangle were tried and each failed for a concrete, verified reason: (1) an
+unguarded shape-only search accepts noise blobs 30-220px² as "equilateral enough" when a real triangle at
+these files' print scale should be ~2000-4000px²; (2) recalibrating the ink-color mask tighter using HSV
+sampled from this file's own confirmed control-circle ink doesn't help — real course ink and false
+positives (a road, a contour-line tangle, a sponsor logo) are statistically indistinguishable in HSV, even
+after (3) document-scanner-style local illumination flattening, which rules out "it's just bad white
+balance"; (4) comparing local stroke thickness (control-ring ink vs. rest of the mask) shows no signal
+either — both come out to the same 4px median; (5) rotation-invariant template matching against a
+synthetic triangle at the expected size found a strong, 120°-symmetric peak that looked promising until
+cropped — it was a course leg crossing a kink in an area-boundary line, not a triangle. A full manual scan
+of the rectified photo (including every `LEGEND_EXCLUDE_BOXES` region, in case the triangle was hidden
+under a hand-excluded logo) didn't turn up an obvious separate triangle mark either. Given all of that,
+`config.START_TRIANGLE_AREA_RATIO_RANGE`/`START_TRIANGLE_MIN_EQUILATERAL_SCORE` make the detector fail
+closed (return `None`) instead of confidently reporting noise — the same "don't fabricate, return `None`"
+principle `ocr_control_code` already uses. Reliably finding the real triangle on these photos would need a
+fundamentally different approach (e.g. a trained symbol classifier) — Phase-3 ML-segmentation territory,
+not a Phase-0 CV heuristic. Don't re-attempt any of the five approaches above without new evidence for why
+they'd work differently next time.
+
 **`vectorize.py`** — assembles segmentation + course results into one GeoJSON `FeatureCollection`, in the
 rectified image's own local pixel coordinates (no real-world geo-referencing — out of scope by design, see
 `prompt.txt`). Y is flipped (`height - y`) so the output is genuinely GeoJSON-convention (Y up), not
 image-convention (Y down) mislabeled as GeoJSON. Carries a non-standard top-level `properties` block
 (source photo, scale, detected line spacing) for `visualize.py` and, eventually, a Flutter renderer to
 overlay the vector data back onto the photo without distortion.
+
+**`cost_grid.py`** — rasterizes `segmentation.SegmentationResult` (terrain polygons + path lines) into a
+single float array, one traversal cost per pixel, in the same pixel coordinate system as the working image
+(Y-down — this runs before `vectorize.py`'s GeoJSON Y-flip). Costs come from `config.TERRAIN_COST`, which is
+a **qualitative ISOM-convention ordering** (path cheapest, then clearing, forest, rock, thicket, with
+water/out-of-bounds strongly avoided) — not a measured running-speed model, since no field data exists to
+calibrate real speeds against (same "don't fabricate validated numbers" reasoning as `MANUAL_KP_COUNTS`).
+Area classes are drawn in a fixed order (`_AREA_DRAW_ORDER`) so that if polygons from different classes
+ever overlap, the stricter/more-expensive class wins, not the cheaper one. Pixels outside any detected
+polygon default to a neutral clearing-like cost (`config.DEFAULT_TERRAIN_COST`) rather than acting as a
+barrier, since those gaps are a segmentation artifact, not real terrain; pixels outside the valid (paper)
+mask get a high but finite cost (`config.OUTSIDE_VALID_MASK_COST`) rather than `inf`, so a start/end point
+landing just outside the valid mask from rectification slop doesn't make path-finding fail outright.
+
+**`pathfinding.py`** — thin wrapper around `skimage.graph.route_through_array` (a Dijkstra-family grid
+shortest-path solver; `scikit-image` was already an installed dependency, and this is the exact function
+`prompt.txt`'s fixed stack names for the Python prototype's routing logic — `scikit-fmm`/Fast Marching is a
+later phase and isn't installed here). `find_route(cost, start_xy, end_xy)` clamps out-of-bounds points into
+the grid rather than raising, and returns the pixel-coordinate route plus its total cost. There is no
+control-sequencing/course-graph in this repo (see Project context above), so `run_pipeline.py`'s
+`_pick_demo_route_endpoints` only ever demos a single two-point leg (start → nearest control, or the first
+two detected controls) — proof the grid is connected and pathable, not a real course route. The resulting
+route becomes a `role: "demo_route"` `LineString` feature in the GeoJSON output and a yellow polyline on the
+QA overlay.
 
 **`config.py`** is where all the per-file empirical calibration lives (`PAGE_ROTATION_K`,
 `LEGEND_EXCLUDE_BOXES`, `HOUGH_PARAM2`, `MANUAL_KP_COUNTS`) — when a photo's rectification or exclusion
@@ -214,11 +269,17 @@ Three tiers, deliberately not one (see `tests/*.py` docstrings for the reasoning
 
 - `test_geometry.py` — synthetic inputs, exact-match assertions on deterministic geometry helpers
   (simplify, `make_valid` handling, mask→polygon, Hough-family shape classification).
-- `test_pipeline_golden.py` — real photos (`map0.jpg`, `map2.jpg`), but *invariant* checks (aspect ratio
-  sanity, control count within a tolerance band of `MANUAL_KP_COUNTS`, segmented area within a plausible
-  fraction of the valid mask) rather than exact-match, since there's no pixel-level ground truth.
-- `test_smoke.py` — parametrized over `config.IN_SCOPE_FILES`, just asserts the full pipeline runs without
-  raising and produces non-empty output.
+- `test_cost_grid.py` / `test_pathfinding.py` — synthetic inputs, exact-match assertions on
+  `cost_grid.build_cost_grid` (terrain-cost rasterization, draw-order/overlap behavior, valid-mask
+  exclusion) and `pathfinding.find_route` (prefers a cheap corridor over an expensive wall, direct route on
+  a uniform grid, out-of-bounds endpoint clamping) — no real photo needed to exercise a grid shortest-path
+  search, same reasoning as `test_geometry.py`.
+- `test_pipeline_golden.py` — real photos (all four `config.IN_SCOPE_FILES`), but *invariant* checks
+  (aspect ratio sanity, control count within a tolerance band of `MANUAL_KP_COUNTS`, segmented area within a
+  plausible fraction of the valid mask, **and now: a demo route is actually found and stays in-bounds**)
+  rather than exact-match, since there's no pixel-level ground truth or ground-truth route.
+- `test_smoke.py` — parametrized over `config.IN_SCOPE_FILES`, just asserts the full pipeline (now
+  including cost-grid + routing) runs without raising and produces non-empty output.
 
 When you change anything in `preprocessing.py` or `segmentation.py`'s masking, re-run the full pipeline on
 all of `IN_SCOPE_FILES` and eyeball the `_qa.png` outputs before trusting the numbers — several real bugs

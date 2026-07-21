@@ -9,11 +9,12 @@ something this pipeline produces -- see plan.
 
 from __future__ import annotations
 
-from shapely.geometry import mapping
+from shapely.geometry import LineString, mapping
 from shapely.ops import transform as shapely_transform
 
 from pipeline.config import TERRAIN_CLASSES
 from pipeline.course_detection import CourseResult
+from pipeline.pathfinding import RouteResult
 from pipeline.preprocessing import PreprocessResult
 from pipeline.segmentation import SegmentationResult
 
@@ -38,6 +39,7 @@ def build_feature_collection(
     course: CourseResult,
     preprocess: PreprocessResult,
     source_filename: str,
+    route: RouteResult | None = None,
 ) -> dict:
     height = preprocess.image.shape[0]
     width = preprocess.image.shape[1]
@@ -73,6 +75,15 @@ def build_feature_collection(
 
     for leg in course.legs:
         features.append(_geom_feature(leg, height, {"role": "course_leg"}))
+
+    if route is not None and len(route.points) >= 2:
+        # "demo_route", not "course_route": there's no control-sequencing
+        # graph yet (see pathfinding.py docstring), so this is a two-point
+        # connectivity proof, not a real full-course route.
+        line = LineString(route.points)
+        features.append(_geom_feature(line, height, {
+            "role": "demo_route", "cost": route.cost,
+        }))
 
     return {
         "type": "FeatureCollection",

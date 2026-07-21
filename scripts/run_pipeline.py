@@ -12,6 +12,7 @@ from __future__ import annotations
 
 import argparse
 import json
+import math
 import os
 import sys
 import time
@@ -20,11 +21,33 @@ sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
 import cv2
 
-from pipeline.course_detection import detect_course
+from pipeline.cost_grid import build_cost_grid
+from pipeline.course_detection import CourseResult, detect_course
+from pipeline.pathfinding import RouteResult, find_route
 from pipeline.preprocessing import preprocess_image
 from pipeline.segmentation import default_valid_mask, segment_terrain
 from pipeline.vectorize import build_feature_collection
 from pipeline.visualize import render_qa_overlay
+
+
+def _pick_demo_route_endpoints(
+    course: CourseResult,
+) -> tuple[tuple[float, float], tuple[float, float]] | None:
+    """Phase-0 has no control-sequencing/course-graph yet (course_detection
+    only returns an unordered control list) -- so the demo route this picks
+    is just "start -> nearest control", or the first two detected controls if
+    no start was found. It's a connectivity proof for the cost grid, not a
+    real full-course route (see pipeline/pathfinding.py's docstring)."""
+    if course.start is not None and course.controls:
+        nearest = min(
+            course.controls,
+            key=lambda c: math.hypot(c.x - course.start[0], c.y - course.start[1]),
+        )
+        return course.start, (nearest.x, nearest.y)
+    if len(course.controls) >= 2:
+        a, b = course.controls[0], course.controls[1]
+        return (a.x, a.y), (b.x, b.y)
+    return None
 
 
 def run(image_path: str, out_dir: str, run_ocr: bool = True) -> dict:
@@ -48,7 +71,16 @@ def run(image_path: str, out_dir: str, run_ocr: bool = True) -> dict:
     n_polys = sum(len(v) for v in seg.polygons.values())
     print(f"[{source_filename}] segmentation: {n_polys} terrain polygons, {len(seg.paths)} path segments")
 
-    fc = build_feature_collection(seg, course, pre, source_filename)
+    cost_grid = build_cost_grid(seg, pre.image.shape, valid_mask=valid_mask)
+    route: RouteResult | None = None
+    endpoints = _pick_demo_route_endpoints(course)
+    if endpoints is not None:
+        route = find_route(cost_grid.cost, endpoints[0], endpoints[1])
+        print(f"[{source_filename}] demo route: {len(route.points)} points, cost={route.cost:.1f}")
+    else:
+        print(f"[{source_filename}] demo route: skipped (need a start + control, or 2+ controls)")
+
+    fc = build_feature_collection(seg, course, pre, source_filename, route=route)
 
     os.makedirs(out_dir, exist_ok=True)
     stem = os.path.splitext(source_filename)[0]
@@ -56,7 +88,7 @@ def run(image_path: str, out_dir: str, run_ocr: bool = True) -> dict:
     with open(geojson_path, "w", encoding="utf-8") as f:
         json.dump(fc, f, ensure_ascii=False, indent=1)
 
-    qa_img = render_qa_overlay(pre.image, seg, course)
+    qa_img = render_qa_overlay(pre.image, seg, course, route=route)
     qa_path = os.path.join(out_dir, f"{stem}_qa.png")
     cv2.imwrite(qa_path, qa_img)
 

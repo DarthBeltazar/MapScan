@@ -5,13 +5,29 @@ section on why that distinction matters here)."""
 
 from __future__ import annotations
 
+import cv2
 import numpy as np
 from shapely.geometry import Polygon
 from shapely.validation import make_valid
 
-from pipeline.course_detection import Control, _dedupe_finish
+from pipeline.course_detection import Control, _dedupe_finish, detect_start_triangle
 from pipeline.segmentation import MIN_POLYGON_AREA_PX, _mask_to_polygons, build_valid_mask
 from pipeline.vectorize import _flip_y
+
+
+def _draw_triangle_outline(mask: np.ndarray, vertices, thickness: int = 5) -> None:
+    mask_u8 = mask.astype(np.uint8)
+    pts = np.array(vertices, dtype=np.int32)
+    cv2.polylines(mask_u8, [pts], isClosed=True, color=1, thickness=thickness)
+    mask[:] = mask_u8.astype(bool)
+
+
+def _equilateral_triangle_vertices(cx: float, cy: float, side: float) -> list[tuple[float, float]]:
+    r = side / np.sqrt(3)
+    return [
+        (cx + r * np.cos(np.deg2rad(-90 + k * 120)), cy + r * np.sin(np.deg2rad(-90 + k * 120)))
+        for k in range(3)
+    ]
 
 
 def test_simplify_preserves_topology_and_rough_area():
@@ -90,3 +106,50 @@ def test_dedupe_finish_no_pair_returns_all_and_none():
 
     assert finish is None
     assert remaining == controls
+
+
+# detect_start_triangle's size/shape gate (config.START_TRIANGLE_*): see its
+# docstring for why an unguarded shape-only search was unreliable on real
+# photos (noise blobs far smaller than a real triangle scored as
+# "equilateral enough"). These use control circles of radius 36px, matching
+# the median this gate was calibrated against on map0.jpg.
+_CONTROLS_RADIUS_36 = [Control(x=300, y=300, radius=36), Control(x=300, y=100, radius=36)]
+
+
+def test_detect_start_triangle_accepts_large_equilateral_triangle_at_expected_scale():
+    mask = np.zeros((400, 400), dtype=bool)
+    vertices = _equilateral_triangle_vertices(cx=100, cy=100, side=72)  # side == control diameter
+    _draw_triangle_outline(mask, vertices)
+
+    result = detect_start_triangle(mask, _CONTROLS_RADIUS_36)
+
+    assert result is not None
+    x, y = result
+    assert abs(x - 100) < 10
+    assert abs(y - 100) < 10
+
+
+def test_detect_start_triangle_rejects_small_noise_triangle():
+    mask = np.zeros((400, 400), dtype=bool)
+    # Same scale/shape as an actual false positive measured on map0.jpg
+    # (sides ~44.7/25.7/23.6px, area ~138px^2) -- far below a real triangle's
+    # expected area at this control-circle scale (~2000-4000px^2).
+    _draw_triangle_outline(mask, [(100, 80), (130, 95), (115, 120)], thickness=2)
+
+    assert detect_start_triangle(mask, _CONTROLS_RADIUS_36) is None
+
+
+def test_detect_start_triangle_rejects_skewed_triangle_at_right_scale():
+    mask = np.zeros((400, 400), dtype=bool)
+    # Right area range (~2200px^2) but a thin, elongated triangle, not
+    # equilateral -- should fail the equilateral-score gate.
+    _draw_triangle_outline(mask, [(50, 100), (150, 105), (100, 115)])
+
+    assert detect_start_triangle(mask, _CONTROLS_RADIUS_36) is None
+
+
+def test_detect_start_triangle_returns_none_with_no_controls_to_calibrate_against():
+    mask = np.zeros((400, 400), dtype=bool)
+    _draw_triangle_outline(mask, _equilateral_triangle_vertices(cx=100, cy=100, side=72))
+
+    assert detect_start_triangle(mask, []) is None

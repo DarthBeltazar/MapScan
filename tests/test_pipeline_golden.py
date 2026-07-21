@@ -12,13 +12,20 @@ accuracy metric.
 from __future__ import annotations
 
 import os
+import sys
 
+import numpy as np
 import pytest
 
-from pipeline.config import MANUAL_KP_COUNTS
+sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
+
+from pipeline.config import MANUAL_KP_COUNTS, TERRAIN_COST
+from pipeline.cost_grid import build_cost_grid
 from pipeline.course_detection import detect_course
+from pipeline.pathfinding import find_route
 from pipeline.preprocessing import preprocess_image
 from pipeline.segmentation import default_valid_mask, segment_terrain
+from scripts.run_pipeline import _pick_demo_route_endpoints
 
 TESTDATA = os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))), "testData")
 GOLDEN_FILES = list(MANUAL_KP_COUNTS)
@@ -67,3 +74,41 @@ def test_segmentation_covers_a_reasonable_share_of_the_valid_area(golden_photo):
     # the GeometryCollection-handling bug this caught during development
     # (that silently dropped whole polygons, down to ~0.04-0.25 coverage).
     assert 0.5 * valid_area <= total_area <= 1.3 * valid_area
+
+
+def test_demo_route_found_end_to_end_on_real_photo(golden_photo):
+    """Phase-0's "segmentation -> cost-grid -> path" proof, run against a
+    real photo rather than synthetic data (unit-level cost-grid/pathfinding
+    correctness is covered in test_cost_grid.py/test_pathfinding.py). Only
+    checks the route is found and sane -- there's no ground-truth route to
+    compare against, same reasoning as the rest of this file."""
+    name, pre, mask, course = golden_photo
+    endpoints = _pick_demo_route_endpoints(course)
+    if endpoints is None:
+        pytest.skip(f"{name}: not enough detected controls/start for a demo route")
+
+    seg_mask = mask & ~course.ink_mask
+    seg = segment_terrain(pre.image, seg_mask)
+    cost_grid = build_cost_grid(seg, pre.image.shape, valid_mask=mask)
+
+    route = find_route(cost_grid.cost, endpoints[0], endpoints[1])
+
+    assert len(route.points) >= 2
+    assert np.isfinite(route.cost)
+    assert route.cost > 0
+    h, w = pre.image.shape[:2]
+    assert all(0 <= x <= w - 1 and 0 <= y <= h - 1 for x, y in route.points)
+
+    # A demo route between two on-land course points (start/controls, never
+    # placed in water) shouldn't need to cross the lake or leave the paper --
+    # both are strongly-avoided-but-finite costs (config.OUTSIDE_VALID_MASK_COST
+    # in particular is finite on purpose, see its docstring, so a route
+    # crossing it wouldn't otherwise raise or get clamped away). Catching this
+    # here needs a real photo's actual terrain layout -- the synthetic grids
+    # in test_pathfinding.py can't exercise it.
+    barrier_costs = {TERRAIN_COST["water"], TERRAIN_COST["out_of_bounds"]}
+    on_barrier = [
+        (x, y) for x, y in route.points
+        if cost_grid.cost[int(round(y)), int(round(x))] in barrier_costs
+    ]
+    assert not on_barrier, f"{name}: demo route crosses water/out-of-bounds at {on_barrier[:5]}"
