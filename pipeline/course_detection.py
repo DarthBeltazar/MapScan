@@ -22,6 +22,7 @@ from shapely.geometry import LineString
 from pipeline.config import (
     HOUGH_PARAM2,
     HOUGH_PARAM2_DEFAULT,
+    RING_COVERAGE_MIN_FRACTION,
     START_TRIANGLE_AREA_RATIO_RANGE,
     START_TRIANGLE_MIN_EQUILATERAL_SCORE,
 )
@@ -117,8 +118,37 @@ def detect_controls(mask: np.ndarray, img_shape: tuple[int, int], param2: int) -
         # circle instead of double-detecting the same ring.
         if any(np.hypot(x - c.x, y - c.y) < r for c in out):
             continue
+        if _ring_ink_coverage(mask, x, y, r) < RING_COVERAGE_MIN_FRACTION:
+            continue
         out.append(Control(x=float(x), y=float(y), radius=float(r)))
     return out
+
+
+def _ring_ink_coverage(mask: np.ndarray, x: float, y: float, r: float, band: int = 3, samples: int = 144) -> float:
+    """Fraction of a candidate circle's own circumference that actually has
+    ink under it, sampled every 2.5 degrees and tolerant of the Hough
+    radius estimate being off by a few px (band). A real printed control
+    ring is one continuous stroke, so a correct detection's circle traces
+    ink almost the whole way around; a HoughCircles false positive fit
+    through scattered non-ring ink -- clutter, or (checked directly on
+    map0.jpg) the round "0" glyphs in a nearby control's own printed code
+    label -- only grazes ink along a fraction of its circumference. Checked
+    directly against every accepted/rejected circle on all four
+    IN_SCOPE_FILES: real rings scored >=0.82, every confirmed false
+    positive (including two that a same-file median-radius comparison
+    couldn't distinguish, since their radii sat inside the real cluster's
+    own range) scored <=0.72 -- see config.RING_COVERAGE_MIN_FRACTION."""
+    h, w = mask.shape
+    hits = 0
+    for i in range(samples):
+        theta = 2 * np.pi * i / samples
+        for dr in range(-band, band + 1):
+            px = int(x + (r + dr) * np.cos(theta))
+            py = int(y + (r + dr) * np.sin(theta))
+            if 0 <= px < w and 0 <= py < h and mask[py, px]:
+                hits += 1
+                break
+    return hits / samples
 
 
 def _dedupe_finish(controls: list[Control], dist_tol_frac: float = 0.5) -> tuple[list[Control], tuple[float, float] | None]:

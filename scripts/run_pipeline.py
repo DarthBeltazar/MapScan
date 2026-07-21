@@ -21,13 +21,13 @@ sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
 import cv2
 
-from pipeline.cost_grid import build_cost_grid
+from pipeline.cost_grid import build_cost_grid, route_terrain_breakdown
 from pipeline.course_detection import CourseResult, detect_course
 from pipeline.pathfinding import RouteResult, find_route
 from pipeline.preprocessing import preprocess_image
 from pipeline.segmentation import default_valid_mask, segment_terrain
 from pipeline.vectorize import build_feature_collection
-from pipeline.visualize import render_qa_overlay
+from pipeline.visualize import render_cost_grid_overlay, render_qa_overlay
 
 
 def _pick_demo_route_endpoints(
@@ -73,14 +73,27 @@ def run(image_path: str, out_dir: str, run_ocr: bool = True) -> dict:
 
     cost_grid = build_cost_grid(seg, pre.image.shape, valid_mask=valid_mask)
     route: RouteResult | None = None
+    terrain_breakdown: dict[str, float] | None = None
     endpoints = _pick_demo_route_endpoints(course)
     if endpoints is not None:
         route = find_route(cost_grid.cost, endpoints[0], endpoints[1])
-        print(f"[{source_filename}] demo route: {len(route.points)} points, cost={route.cost:.1f}")
+        terrain_breakdown = route_terrain_breakdown(cost_grid.class_grid, route.points)
+        # recomputed_cost is a from-scratch resum of this same route against
+        # this same grid (pathfinding.RouteResult docstring) -- printing the
+        # comparison surfaces a real bug immediately instead of silently
+        # trusting route_through_array's own number.
+        cost_check = "ok" if math.isclose(route.cost, route.recomputed_cost, rel_tol=1e-3) else "MISMATCH"
+        breakdown_str = ", ".join(
+            f"{name}={frac * 100:.0f}%" for name, frac in sorted(terrain_breakdown.items(), key=lambda kv: -kv[1])
+        )
+        print(f"[{source_filename}] demo route: {len(route.points)} points, cost={route.cost:.1f} "
+              f"(cross-check {cost_check}), terrain: {breakdown_str}")
     else:
         print(f"[{source_filename}] demo route: skipped (need a start + control, or 2+ controls)")
 
-    fc = build_feature_collection(seg, course, pre, source_filename, route=route)
+    fc = build_feature_collection(
+        seg, course, pre, source_filename, route=route, route_terrain_breakdown=terrain_breakdown,
+    )
 
     os.makedirs(out_dir, exist_ok=True)
     stem = os.path.splitext(source_filename)[0]
@@ -92,8 +105,12 @@ def run(image_path: str, out_dir: str, run_ocr: bool = True) -> dict:
     qa_path = os.path.join(out_dir, f"{stem}_qa.png")
     cv2.imwrite(qa_path, qa_img)
 
-    print(f"[{source_filename}] wrote {geojson_path} ({len(fc['features'])} features) "
-          f"and {qa_path} in {time.time() - t0:.1f}s")
+    cost_qa_img = render_cost_grid_overlay(cost_grid.cost, route=route)
+    cost_qa_path = os.path.join(out_dir, f"{stem}_cost_qa.png")
+    cv2.imwrite(cost_qa_path, cost_qa_img)
+
+    print(f"[{source_filename}] wrote {geojson_path} ({len(fc['features'])} features), "
+          f"{qa_path}, and {cost_qa_path} in {time.time() - t0:.1f}s")
     return fc
 
 

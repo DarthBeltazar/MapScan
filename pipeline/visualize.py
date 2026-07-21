@@ -10,6 +10,7 @@ from __future__ import annotations
 import cv2
 import numpy as np
 
+from pipeline.config import TERRAIN_COST
 from pipeline.course_detection import CourseResult
 from pipeline.pathfinding import RouteResult
 from pipeline.segmentation import SegmentationResult
@@ -76,3 +77,38 @@ def render_qa_overlay(
         cv2.polylines(blended, [pts], isClosed=False, color=ROUTE_COLOR, thickness=3)
 
     return blended
+
+
+# Colormap cap for render_cost_grid_overlay: any cost at or above this value
+# saturates to the colormap's top ("expensive") end. Deliberately below
+# water/out_of_bounds's own cost (20/50, config.TERRAIN_COST) -- those two
+# are meant to look uniformly "avoid this", not spread thinly across the top
+# of a scale that would then compress the actually-interesting path/
+# clearing/forest/rock/marsh/thicket gradient into a sliver near zero.
+COST_HEATMAP_CAP = TERRAIN_COST["thicket"] * 1.5
+
+
+def render_cost_grid_overlay(cost: np.ndarray, route: RouteResult | None = None) -> np.ndarray:
+    """Visualize the literal per-pixel array pathfinding.find_route runs
+    against -- distinct from render_qa_overlay's terrain fill, which draws
+    the *pre-rasterization* polygons and can disagree with the final grid
+    wherever polygons overlap (cost_grid._AREA_DRAW_ORDER breaks the tie) or
+    a pixel falls back to a gap/valid-mask cost that no polygon shows at
+    all. This is what to check when a route looks wrong on the main QA
+    overlay but the terrain fill there looks fine -- the discrepancy, if
+    any, is in the rasterization step, not the segmentation.
+
+    Cheap-to-expensive maps blue -> red (cv2.COLORMAP_TURBO), capped at
+    COST_HEATMAP_CAP so path/clearing/forest/rock/marsh/thicket -- the
+    classes a route should actually be threading between -- keep visible
+    contrast; water/out_of_bounds both saturate to the same "definitely
+    avoid" red regardless of exactly how much worse 50 is than 20."""
+    capped = np.clip(cost, 0, COST_HEATMAP_CAP)
+    normalized = (capped / COST_HEATMAP_CAP * 255).astype(np.uint8)
+    heat = cv2.applyColorMap(normalized, cv2.COLORMAP_TURBO)
+
+    if route is not None and len(route.points) >= 2:
+        pts = np.array(route.points, dtype=np.int32).reshape(-1, 1, 2)
+        cv2.polylines(heat, [pts], isClosed=False, color=(255, 255, 255), thickness=3)
+
+    return heat

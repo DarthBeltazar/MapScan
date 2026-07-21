@@ -158,7 +158,18 @@ LEGEND_EXCLUDE_BOXES: dict[str, list[tuple[float, float, float, float]]] = {
 # that was tried and abandoned as a global filter.
 HOUGH_PARAM2_DEFAULT = 38
 HOUGH_PARAM2: dict[str, int] = {
-    "map0.jpg": 46,  # -> 17 found vs manual count 18
+    "map0.jpg": 40,  # -> 13 found vs manual count 18, all high ring-ink-
+    # coverage (see RING_COVERAGE_MIN_FRACTION), after that filter replaced
+    # this file's old value of 46. Lowering to 40 recovers one previously
+    # missed real control ("17-56") without adding any false positive --
+    # the coverage filter now does the false-positive-suppression job that
+    # this threshold used to be tuned tighter for, so param2 could be
+    # loosened. Checked directly: a second missed control ("16-54") stays
+    # missed at any param2 down to 6 (extremely permissive) -- that ring's
+    # own printed shape is visibly non-circular (flattened where its two
+    # connector legs converge into the same point at the bottom), so no
+    # threshold recovers it; would need shape-fitting other than
+    # HoughCircles, not attempted.
     "map2.jpg": 44,  # -> 9 found vs manual count 9; recalibrated again (was
     # 48) after adding PAGE_ROTATION_K, same reason as map4.jpg below -- also
     # needed the top-border-strip exclude box restored (see
@@ -175,6 +186,26 @@ HOUGH_PARAM2: dict[str, int] = {
     "map6.jpg": 42,  # -> 9 found vs manual count ~9 (see MANUAL_KP_COUNTS); stable
     # across param2 in [38, 44], i.e. not a knife-edge fit to one value.
 }
+
+# Post-detection ring-ink-coverage filter (course_detection.detect_controls,
+# via _ring_ink_coverage): drop any accepted Hough circle whose own
+# circumference isn't mostly traced by actual course ink. NOT the
+# modal-radius-consistency *pre*-filter that was tried and abandoned (see
+# detect_controls' docstring) -- that one tried to pick real controls out of
+# the full noisy candidate pool by radius alone before param2 selection did
+# its job, and failed because the full pool has no clean radius peak. This
+# instead runs after param2 selection already produced a good set, and
+# checks per-circle ink coverage rather than radius -- radius alone isn't
+# enough: checked directly on map0.jpg, two false positives near its
+# "18-100" control (Hough fitting circles to the round "0" glyphs in that
+# control's own printed code label) measured radius 45.5px/26.8px, both
+# inside the same file's real-control radius range (22-37px), so no radius
+# threshold could separate them. Ink coverage did: every real ring on all
+# four IN_SCOPE_FILES scored >=0.82, every confirmed false positive --
+# including the two above and the two larger, purely size-based outliers
+# found first (on map0.jpg: radius 48px/57px sitting on other text labels,
+# not ink) -- scored <=0.72. This value sits in the middle of that gap.
+RING_COVERAGE_MIN_FRACTION = 0.75
 
 # Files this Phase-0 round targets (classic forest ISOM). Everything else in
 # testData (sprint/ISSprOM, alpine, rogaine topo-base maps) is explicitly out

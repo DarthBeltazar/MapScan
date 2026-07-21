@@ -6,9 +6,11 @@ needed to exercise a grid shortest-path search).
 
 from __future__ import annotations
 
+import math
+
 import numpy as np
 
-from pipeline.pathfinding import find_route
+from pipeline.pathfinding import _geometric_path_cost, find_route
 
 
 def test_route_prefers_cheap_corridor_over_expensive_wall():
@@ -45,3 +47,35 @@ def test_out_of_bounds_endpoints_are_clamped_not_raised():
 
     assert route.points[0] == (0.0, 0.0)
     assert route.points[-1] == (4.0, 4.0)
+
+
+def test_recomputed_cost_matches_reported_cost():
+    # RouteResult.recomputed_cost is an independent resum of the same route
+    # against the same grid (see pathfinding._geometric_path_cost) -- on a
+    # varied, non-uniform grid it should reproduce route_through_array's own
+    # reported cost, not just loosely approximate it.
+    rng = np.random.default_rng(0)
+    cost = rng.uniform(0.5, 5.0, size=(30, 30)).astype(np.float32)
+
+    route = find_route(cost, (1.0, 2.0), (27.0, 24.0))
+
+    assert math.isclose(route.cost, route.recomputed_cost, rel_tol=1e-4)
+
+
+def test_geometric_path_cost_matches_hand_computed_value():
+    # Two-step path, one orthogonal step and one diagonal step, on a cost
+    # grid simple enough to hand-verify against MCP_Geometric's own
+    # documented weighting (see _geometric_path_cost's docstring): each
+    # step's Euclidean length is billed half at each endpoint's cost.
+    cost = np.array([
+        [1.0, 2.0, 4.0],
+        [1.0, 2.0, 4.0],
+        [1.0, 2.0, 4.0],
+    ], dtype=np.float32)
+    points = [(0.0, 0.0), (1.0, 0.0), (2.0, 1.0)]  # (x, y): orthogonal then diagonal step
+
+    result = _geometric_path_cost(cost, points)
+
+    orthogonal_step = 1.0 * (cost[0, 0] + cost[0, 1]) / 2.0  # (0,0) -> (1,0) i.e. row0,col0 -> row0,col1
+    diagonal_step = math.sqrt(2) * (cost[0, 1] + cost[1, 2]) / 2.0  # (1,0) -> (2,1) i.e. row0,col1 -> row1,col2
+    assert math.isclose(result, orthogonal_step + diagonal_step, rel_tol=1e-6)

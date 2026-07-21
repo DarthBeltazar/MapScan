@@ -40,6 +40,7 @@ def build_feature_collection(
     preprocess: PreprocessResult,
     source_filename: str,
     route: RouteResult | None = None,
+    route_terrain_breakdown: dict[str, float] | None = None,
 ) -> dict:
     height = preprocess.image.shape[0]
     width = preprocess.image.shape[1]
@@ -81,9 +82,23 @@ def build_feature_collection(
         # graph yet (see pathfinding.py docstring), so this is a two-point
         # connectivity proof, not a real full-course route.
         line = LineString(route.points)
-        features.append(_geom_feature(line, height, {
+        properties = {
             "role": "demo_route", "cost": route.cost,
-        }))
+            # Independent cross-check on cost, not a duplicate -- see
+            # RouteResult.recomputed_cost's docstring. Should equal `cost`
+            # to within float rounding; a real gap here would mean the grid
+            # this route was found on doesn't match the one passed to
+            # build_feature_collection.
+            "recomputed_cost": route.recomputed_cost,
+        }
+        if route_terrain_breakdown is not None:
+            # Fraction of the route's length per terrain class (see
+            # cost_grid.route_terrain_breakdown) -- what a low cost number
+            # alone can't show: whether it's low because the route actually
+            # follows path/clearing, or because it cuts through an
+            # under-detected gap that happens to price the same.
+            properties["terrain_breakdown"] = route_terrain_breakdown
+        features.append(_geom_feature(line, height, properties))
 
     return {
         "type": "FeatureCollection",

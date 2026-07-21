@@ -23,6 +23,24 @@ from pipeline.config import LEGEND_EXCLUDE_BOXES
 MIN_POLYGON_AREA_PX = 60.0
 SIMPLIFY_TOLERANCE_PX = 2.0
 
+# Median-blur kernel size for the pre-k-means copy segment_terrain clusters
+# on (see its comment). Raised from an earlier 9: checked directly against a
+# clean, texture-only patch of map2.jpg's dotted "open land with scattered
+# trees" fill (ISOM 402/403 -- a solid base color with a fine white dot
+# screen printed over it) that the same real fill, sampled from >100k
+# same-class pixels, has hue std=11.4 at k=9, straddling the h=34 clearing/
+# thicket cutoff in _classify_vegetation_cluster (29% of that one patch's
+# pixels already fall on the "thicket" side of the line, despite it being
+# one uniform printed color) -- this is CMYK halftone screening + JPEG
+# noise, not a whole-photo white-balance issue (both this file and map0.jpg
+# already land within ~3 BGR points of neutral gray on their own paper-
+# margin white point, checked directly). k=21 cuts that std to 7.4 (-35%;
+# larger kernels up to 61 cut it further but started visibly melting real
+# small vegetation blobs into their surroundings on the QA overlays, so this
+# stops short of that) without visibly destroying real small-scale detail
+# (checked directly on all four IN_SCOPE_FILES' QA overlays).
+VEGETATION_CLUSTER_BLUR_KSIZE = 21
+
 
 @dataclass
 class SegmentationResult:
@@ -243,7 +261,7 @@ def segment_terrain(img: np.ndarray, valid_mask: np.ndarray, k_clusters: int = 6
         # sees mostly single-pixel specks and drops nearly all of them as
         # noise -- verified empirically, this was silently discarding ~80%+
         # of the vegetation area before adding the blur.
-        blurred_hsv = cv2.cvtColor(cv2.medianBlur(img, 9), cv2.COLOR_BGR2HSV)
+        blurred_hsv = cv2.cvtColor(cv2.medianBlur(img, VEGETATION_CLUSTER_BLUR_KSIZE), cv2.COLOR_BGR2HSV)
         samples = blurred_hsv[ys, xs].astype(np.float32)
         criteria = (cv2.TERM_CRITERIA_EPS + cv2.TERM_CRITERIA_MAX_ITER, 20, 1.0)
         _compactness, labels, centers = cv2.kmeans(
