@@ -18,9 +18,7 @@ The repo root now holds multiple sub-projects side by side:
   Phase 1 work.
 - **`app/`** — Phase 1: Flutter client + Rust core crate (`app/rust/`), wired together via
   `flutter_rust_bridge` (scaffolded with `flutter_rust_bridge_codegen create`, not a port of
-  `python_prototype/`). Currently just the generated skeleton — a `greet()` sanity call from Dart into
-  Rust (`app/rust/src/api/simple.rs`, called from `app/lib/main.dart`) — nothing from the Python pipeline
-  has been reimplemented yet. Toolchain on this machine: Flutter SDK at `C:\flutter` (stable channel, not
+  `python_prototype/`). Toolchain on this machine: Flutter SDK at `C:\flutter` (stable channel, not
   inside the repo), Rust via rustup, Android SDK/NDK at `%LOCALAPPDATA%\Android\Sdk`, `flutter_rust_bridge_codegen`
   via `cargo install`. `flutter doctor` is clean; both `flutter build windows` and `flutter build apk --debug`
   are verified working from this checkout.
@@ -37,6 +35,80 @@ The repo root now holds multiple sub-projects side by side:
     generates/vendors** — if the project is ever regenerated or `rust_builder/cargokit` is refreshed from a
     newer frb release, re-check whether upstream has fixed Gradle 9 compatibility before reapplying (crates.io
     still listed 2.12.0 as the newest *stable* release when this was hit; a 2.13.0 beta existed but wasn't used).
+
+  ### Rust CV pipeline (in progress) and the OpenCV toolchain
+
+  `app/rust/src/api/preprocessing.rs` has the first reimplemented pipeline stage: `rectify_photo`
+  (decode -> downscale -> paper-quad detection -> perspective warp -> PNG-encode), a conceptual Rust port
+  of the Python prototype's `preprocessing.find_paper_quad`/`preprocessing.rectify` — not line-for-line,
+  scoped to perspective correction only for this first slice (no EXIF-safe load, white balance,
+  reading-orientation correction, or magnetic-north detection yet, unlike the Python version). Verified
+  directly against all 4 in-scope real photos via `app/rust/tests/rectify_photo.rs`
+  (`cargo test --test rectify_photo`) — paper quad found and rectified on all of them. Everything else in
+  `python_prototype/pipeline/` (terrain/course segmentation, cost-grid, pathfinding) is still unported.
+
+  Uses the `opencv` crate (Rust bindings, `twistedfall/opencv-rust`) via FFI to a real OpenCV install —
+  this is genuinely new infrastructure, not something `flutter_rust_bridge_codegen create` set up. Needed
+  on top of the base Flutter/Rust toolchain above:
+  - **LLVM/libclang** (`winget install LLVM.LLVM`) — `opencv` crate's `build.rs` runs `bindgen` against
+    the OpenCV C++ headers, which needs `libclang.dll`.
+  - **OpenCV itself**, prebuilt (not built from source — a vcpkg from-source build was ruled out purely on
+    time, not correctness). Downloaded directly from the `opencv/opencv` GitHub releases (not Chocolatey:
+    this machine's `choco` isn't running elevated and installing to `C:\ProgramData\chocolatey` needs
+    admin; the GitHub release `.exe` is a self-extracting archive that unpacks anywhere without admin).
+    Currently at `C:\Users\AlexandrGeorgiev\opencv4_tools\opencv\build\` (Windows) and
+    `C:\Users\AlexandrGeorgiev\opencv_tools_android_4\OpenCV-android-sdk\` (Android, downloaded and
+    extracted but **not yet wired into the Android/Gradle build** — Windows was gotten working first and
+    Android is follow-up work, see below).
+  - **Checked directly, don't re-attempt OpenCV 5.0.0 on Windows**: the `opencv/opencv` GitHub release
+    `5.0.0`'s prebuilt `opencv_world500.dll` and its own bundled headers are out of sync — several
+    `cv::_OutputArray` methods (`fit`, `fitSameSize`) that the shipped `mat.hpp` declares (and that
+    `opencv-rust`'s generated bindings call into) aren't actually exported from that specific DLL, so
+    linking `rust_core` fails with `LNK2019` unresolved externals. Confirmed by `dumpbin /exports` on the
+    DLL. This looks like a real packaging bug in that specific release asset, not a config mistake on this
+    end. Fix was downgrading to the `4.14.0` release line (latest stable 4.x), which links cleanly and is
+    what `opencv-rust` has years of testing against — also avoids OpenCV 5's `imgproc` -> `geometry` module
+    split (`approxPolyDP`/`convexHull`/`contourArea`/`minAreaRect`/`getPerspectiveTransform`/`boxPoints`
+    moved to a new `geometry` module in 5.x; `findContours`/`Canny`/`dilate`/`cvtColor`/`warpPerspective`
+    did not move), which would otherwise need `#[cfg(...)]`-gated imports to stay portable across the two
+    major versions.
+  - **Required env vars** (persisted as user-level env vars via `[Environment]::SetEnvironmentVariable`,
+    so new shells pick them up without re-setting): `OPENCV_LINK_LIBS=opencv_world4140`,
+    `OPENCV_LINK_PATHS=C:\Users\AlexandrGeorgiev\opencv4_tools\opencv\build\x64\vc16\lib`,
+    `OPENCV_INCLUDE_PATHS=C:\Users\AlexandrGeorgiev\opencv4_tools\opencv\build\include` (both consumed by
+    `opencv-rust`'s `build.rs`/cargo, backslashes are fine here),
+    `OPENCV_BIN_DIR=C:/Users/AlexandrGeorgiev/opencv4_tools/opencv/build/x64/vc16/bin` (used only by the
+    CMake DLL-bundling step below — **must use forward slashes here specifically**: a backslash-heavy
+    value breaks when CMake interpolates it into a generated `.cmake` install script
+    (`Invalid character escape '\U'`), since CMake treats backslash as its own string-escape character;
+    checked directly, this is what `OPENCV_BIN_DIR` hit before switching to forward slashes), and
+    `LIBCLANG_PATH=C:\Program Files\LLVM\bin`.
+  - **Runtime DLL, not just link-time `.lib`**: linking `rust_core` only needs `OPENCV_LINK_PATHS`'s
+    `.lib`; *running* anything that loads `rust_core.dll` (the built app, or `cargo test`) additionally
+    needs the actual `opencv_world4140.dll` discoverable — either on `PATH` or copied next to the
+    executable — or it fails to start with `STATUS_DLL_NOT_FOUND` despite having built successfully.
+    Checked directly: `flutter build windows` succeeded while still silently producing a
+    non-starting `app.exe`, because cargokit's own DLL-bundling only knows about `rust_core.dll`, not
+    its transitive `opencv_world4140.dll` dependency. Fixed by a small addition to `app/windows/CMakeLists.txt`
+    (search `OPENCV_BIN_DIR`) that installs `$ENV{OPENCV_BIN_DIR}/$ENV{OPENCV_LINK_LIBS}.dll` next to
+    `app.exe` at build time, gated on those two env vars being set — **this is a hand-edit to a
+    `flutter create`-generated file**, same caveat as the Gradle patches above: re-check after any
+    regeneration. For `cargo test`/`cargo build` run directly (not through `flutter build`), the OpenCV
+    `bin` dir also needs to be on `PATH` for the same reason.
+  - **Android is not wired up yet.** The OpenCV Android SDK (prebuilt per-ABI `.so`s) is downloaded and
+    extracted (see path above) but nothing in `app/rust_builder`'s Gradle/cargokit build currently points
+    at it — cargokit invokes `cargo build --target <abi>-linux-android` per ABI itself, and each of those
+    needs its own `OPENCV_LINK_LIBS`/`OPENCV_LINK_PATHS`/`OPENCV_INCLUDE_PATHS` pointed at that ABI's
+    slice of the Android SDK (plus the resulting `.so` bundled into the APK's `jniLibs`), which is
+    meaningfully more setup than the Windows env vars above and hasn't been attempted yet — a distinct
+    follow-up task, not assumed-done infrastructure.
+  - **GUI verification caveat**: this repo is sometimes worked on from a non-interactive background
+    session with no attached Windows desktop, where a launched GUI app never renders a visible window
+    (`MainWindowHandle` stays `0`) even though it's running correctly. Don't treat a blank/handle-0 window
+    as a crash in that situation — instead confirm correctness headlessly (`cargo test` against real
+    photos, as `rectify_photo.rs` does, and/or checking via `Get-Process ... | Select Modules` that the
+    expected DLLs actually loaded) and say plainly that visual GUI confirmation wasn't possible, rather
+    than claiming to have "seen" the app run.
 
 Key facts from `prompt.txt` that matter when working in `python_prototype/`:
 

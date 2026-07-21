@@ -87,6 +87,18 @@ if(PLUGIN_BUNDLED_LIBRARIES)
     COMPONENT Runtime)
 endif()
 
+# rust_core.dll (installed above via PLUGIN_BUNDLED_LIBRARIES) dynamically
+# links against OpenCV; that dependency isn't tracked by cargokit's own
+# bundling, so bundle it here too, or app.exe fails to start with
+# STATUS_DLL_NOT_FOUND despite building successfully -- checked directly.
+# Requires OPENCV_BIN_DIR / OPENCV_LINK_LIBS env vars (same ones the Rust
+# build itself needs) to be set at `flutter build`/`flutter run` time.
+if(DEFINED ENV{OPENCV_BIN_DIR} AND DEFINED ENV{OPENCV_LINK_LIBS})
+  install(FILES "$ENV{OPENCV_BIN_DIR}/$ENV{OPENCV_LINK_LIBS}.dll"
+    DESTINATION "${INSTALL_BUNDLE_LIB_DIR}"
+    COMPONENT Runtime)
+endif()
+
 # Copy the native assets provided by the build.dart from all packages.
 set(NATIVE_ASSETS_DIR "${PROJECT_BUILD_DIR}native_assets/windows/")
 install(DIRECTORY "${NATIVE_ASSETS_DIR}"
