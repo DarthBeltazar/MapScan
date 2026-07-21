@@ -8,13 +8,18 @@ from __future__ import annotations
 
 # Closed set of ISOM terrain classes this pipeline recognizes -- matches the
 # taxonomy fixed in prompt.txt (forest / clearing / thicket / paths / water /
-# rock / out-of-competition). This is the enum the future cost-grid step will
-# key its running-speed lookup table on, so it must stay closed (no ad-hoc
-# extra classes).
+# rock / out-of-competition), plus one deliberate extension: "marsh" isn't in
+# prompt.txt's original set, added on explicit request after checking
+# directly that all four IN_SCOPE_FILES photograph real printed marsh symbol
+# (a periodic horizontal dash/line screen, see segmentation._marsh_mask) that
+# had nowhere to go in the closed set otherwise. This is the enum the
+# cost-grid step keys its running-speed lookup table on, so any further
+# addition beyond this one should be a deliberate decision, not an ad-hoc one.
 TERRAIN_CLASSES = (
     "forest",         # лес (проходимый)
     "clearing",       # поляна / открытое пространство
     "thicket",        # чаща / труднопроходимая растительность
+    "marsh",          # болото
     "path",           # тропы / дороги
     "water",          # вода
     "rock",           # скалы / камни (текстура, не цвет)
@@ -52,7 +57,12 @@ PAGE_ROTATION_K: dict[str, int] = {
 LEGEND_EXCLUDE_BOXES: dict[str, list[tuple[float, float, float, float]]] = {
     "map0.jpg": [
         (0.0, 0.0, 1.0, 0.09),      # title/date/scale strip
-        (0.64, 0.0, 1.0, 0.38),     # control-description grid + class column
+        (0.625, 0.0, 1.0, 0.38),    # control-description grid + class column
+        # -- x0 widened from 0.64: checked directly (course_detection.
+        # detect_legs false positives, see plan) that the table's own left
+        # border and red row-index column ("1","2",...,"10") sit at
+        # x~1822px/2889px=0.631, just outside the old 0.64 boundary, so that
+        # red-ink rule line was leaking through as a spurious "leg" segment.
         (0.44, 0.10, 0.61, 0.28),   # "Нескучный сад" inset map
         (0.245, 0.108, 0.36, 0.28),  # Clever/Moscompass logos
         (0.07, 0.31, 0.16, 0.445),  # round club logo
@@ -202,6 +212,9 @@ TERRAIN_COST = {
     "clearing": 1.0,
     "forest": 1.5,
     "rock": 2.5,
+    "marsh": 3.0,  # wet, uneven ground -- slower than rock, not as bad as
+    # dense thicket vegetation; qualitative placement like the rest of this
+    # table, see the module comment above.
     "thicket": 4.0,
     "water": 20.0,
     "out_of_bounds": 50.0,

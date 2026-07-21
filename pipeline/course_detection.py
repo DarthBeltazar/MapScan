@@ -238,6 +238,17 @@ def detect_legs(mask: np.ndarray, exclude_disks: list[Control], start: tuple[flo
         cv2.circle(work, (int(c.x), int(c.y)), int(c.radius * 1.4), 0, thickness=-1)
     if start is not None:
         cv2.circle(work, (int(start[0]), int(start[1])), int(mask.shape[0] * 0.02), 0, thickness=-1)
+    # Same border-frame exclusion as detect_controls, and for the same
+    # reason: checked directly (course_detection false positives, see plan)
+    # that the sheet's own printed border ends up in the broad course-ink
+    # mask on all four in-scope photos and Hough was tracing long "leg"
+    # segments along it, running the full width/height of the sheet.
+    h, w = mask.shape[:2]
+    my, mx = int(h * 0.015), int(w * 0.015)
+    work[:my, :] = False
+    work[-my:, :] = False
+    work[:, :mx] = False
+    work[:, -mx:] = False
     mask_u8 = (work.astype(np.uint8)) * 255
     edges = cv2.Canny(mask_u8, 40, 120)
     # minLineLength scaled to image size and set well above a control-code

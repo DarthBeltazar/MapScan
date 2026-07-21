@@ -119,6 +119,51 @@ def _rock_mask(gray: np.ndarray, light_mask: np.ndarray) -> np.ndarray:
     return (density > 0.18) & light_mask
 
 
+def _marsh_mask(gray: np.ndarray, valid_mask: np.ndarray, exclude: np.ndarray) -> np.ndarray:
+    """ISOM marsh: a periodic *horizontal* dash/line screen printed over
+    another area color, usually along a water body's edge. Checked directly
+    against all four IN_SCOPE_FILES: a black-striped patch at map0.jpg's
+    oz. Bezdonnoye shoreline and a pale-blue-striped reed band along map2.jpg/
+    map4.jpg/map6.jpg's stream valleys -- two different ink colors, which is
+    why this classifies by *periodicity*, not hue: count how many times a
+    tall, thin vertical window crosses a strong gray-value transition (a
+    repeating horizontal stripe crosses it many times; a single printed line,
+    contour, road edge, or text stroke crosses it once or twice, regardless
+    of that edge's own local orientation) and require that count to clearly
+    dominate the equivalent horizontal-window count.
+
+    An earlier version of this test used directional edge *density* after a
+    morphological close (mirroring _rock_mask's approach) and was checked
+    directly to fail badly: MORPH_CLOSE bridges nearby edges into large
+    blobs regardless of whether they're actually periodic, so it lit up
+    almost every contour tangle and road edge on the map, not just marsh.
+    Counting transitions in a thin window (no closing) is what actually
+    discriminates "crossed repeatedly" from "crossed once" -- verified
+    directly by rendering the candidate mask over all four in-scope photos
+    before and after the fix. A closing morphological open at the end (not
+    to be confused with the abandoned MORPH_CLOSE step above) still drops
+    thin false-positive slivers (e.g. garden/allotment plot-grid edges,
+    which are periodic in one direction over a short run but not sustained
+    the way a real marsh band is).
+    """
+    sob_y = np.abs(cv2.Sobel(gray, cv2.CV_32F, 0, 1, ksize=3))
+    sob_x = np.abs(cv2.Sobel(gray, cv2.CV_32F, 1, 0, ksize=3))
+    transitions_y = (sob_y > 25).astype(np.float32)
+    transitions_x = (sob_x > 25).astype(np.float32)
+    # cv2 ksize is (width, height): a tall thin window (1, 25) counts
+    # transitions along a column (sensitive to horizontal stripes), then a
+    # short horizontal smoothing (9, 1) requires that count sustained across
+    # neighboring columns, not a one-pixel fluke.
+    vcount = cv2.boxFilter(transitions_y, -1, (1, 25)) * 25
+    vcount = cv2.boxFilter(vcount, -1, (9, 1))
+    hcount = cv2.boxFilter(transitions_x, -1, (25, 1)) * 25
+    hcount = cv2.boxFilter(hcount, -1, (1, 9))
+    periodic = (vcount > 15.0) & (vcount > hcount * 2.0)
+    periodic_u8 = periodic.astype(np.uint8) * 255
+    periodic_u8 = cv2.morphologyEx(periodic_u8, cv2.MORPH_OPEN, np.ones((5, 5), np.uint8))
+    return (periodic_u8 > 0) & valid_mask & ~exclude
+
+
 def _path_lines(gray: np.ndarray, exclude: np.ndarray) -> list[LineString]:
     """Short line segments for dark, thin linear features (the common
     solid/dashed black ISOM path symbols). Deliberately not merged into
@@ -169,6 +214,14 @@ def segment_terrain(img: np.ndarray, valid_mask: np.ndarray, k_clusters: int = 6
     rock = _rock_mask(gray, light_mask)
 
     remaining = valid_mask & ~water & ~out_of_bounds & ~rock
+    marsh = _marsh_mask(gray, valid_mask, exclude=~remaining)
+    # Marsh's own dash/line ink is dense and dark enough to otherwise get
+    # picked up wholesale by _path_lines (checked directly: before this
+    # exclusion, map0.jpg's marsh patch alone contributed a dense cluster of
+    # spurious path segments -- see plan) -- carve it out before path
+    # detection the same way water/out_of_bounds/rock already are.
+    remaining &= ~marsh
+
     paths = _path_lines(gray, exclude=~remaining)
     # Path ink itself shouldn't be classified as vegetation fill either.
     dark_path_mask = gray < 90
@@ -178,6 +231,7 @@ def segment_terrain(img: np.ndarray, valid_mask: np.ndarray, k_clusters: int = 6
     result.polygons["water"] = _mask_to_polygons(water)
     result.polygons["out_of_bounds"] = _mask_to_polygons(out_of_bounds)
     result.polygons["rock"] = _mask_to_polygons(rock)
+    result.polygons["marsh"] = _mask_to_polygons(marsh)
     result.paths = paths
 
     ys, xs = np.where(remaining)

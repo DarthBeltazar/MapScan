@@ -25,7 +25,7 @@ from pipeline.segmentation import SegmentationResult
 # guarantee disjointness), the stricter/more-expensive class wins rather than
 # the cheaper one -- the safer failure mode for a "don't run through the lake"
 # tool.
-_AREA_DRAW_ORDER = ("clearing", "forest", "thicket", "rock", "water", "out_of_bounds")
+_AREA_DRAW_ORDER = ("clearing", "forest", "thicket", "rock", "marsh", "water", "out_of_bounds")
 
 
 @dataclass

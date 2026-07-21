@@ -28,6 +28,7 @@ TERRAIN_COLORS_BGR = {
     "thicket": (0, 128, 255),     # orange
     "water": (0, 255, 255),       # yellow
     "rock": (255, 255, 0),        # cyan
+    "marsh": (255, 0, 140),       # violet
     "out_of_bounds": (255, 0, 0),  # pure blue
 }
 PATH_COLOR = (0, 0, 255)
