@@ -3,7 +3,13 @@
 
 // ignore_for_file: unused_import, unused_element, unnecessary_import, duplicate_ignore, invalid_use_of_internal_member, annotate_overrides, non_constant_identifier_names, curly_braces_in_flow_control_structures, prefer_const_literals_to_create_immutables, unused_field
 
+import 'api/analyze.dart';
+import 'api/cost_grid.dart';
+import 'api/course_detection.dart';
+import 'api/geometry.dart';
+import 'api/pathfinding.dart';
 import 'api/preprocessing.dart';
+import 'api/segmentation.dart';
 import 'api/simple.dart';
 import 'dart:async';
 import 'dart:convert';
@@ -67,7 +73,7 @@ class RustLib extends BaseEntrypoint<RustLibApi, RustLibApiImpl, RustLibWire> {
   String get codegenVersion => '2.12.0';
 
   @override
-  int get rustContentHash => -1389451345;
+  int get rustContentHash => -1223567005;
 
   static const kDefaultExternalLibraryLoaderConfig =
       ExternalLibraryLoaderConfig(
@@ -79,6 +85,15 @@ class RustLib extends BaseEntrypoint<RustLibApi, RustLibApiImpl, RustLibWire> {
 }
 
 abstract class RustLibApi extends BaseApi {
+  Future<AnalyzeResult> crateApiAnalyzeAnalyzeMap({
+    required List<int> imageBytes,
+    required List<ExcludeBox> legendBoxes,
+    required double houghParam2,
+    String? sourceFilename,
+  });
+
+  Future<CourseResult> crateApiCourseDetectionCourseResultDefault();
+
   String crateApiSimpleGreet({required String name});
 
   Future<void> crateApiSimpleInitApp();
@@ -97,13 +112,78 @@ class RustLibApiImpl extends RustLibApiImplPlatform implements RustLibApi {
   });
 
   @override
+  Future<AnalyzeResult> crateApiAnalyzeAnalyzeMap({
+    required List<int> imageBytes,
+    required List<ExcludeBox> legendBoxes,
+    required double houghParam2,
+    String? sourceFilename,
+  }) {
+    return handler.executeNormal(
+      NormalTask(
+        callFfi: (port_) {
+          final serializer = SseSerializer(generalizedFrbRustBinding);
+          sse_encode_list_prim_u_8_loose(imageBytes, serializer);
+          sse_encode_list_exclude_box(legendBoxes, serializer);
+          sse_encode_f_64(houghParam2, serializer);
+          sse_encode_opt_String(sourceFilename, serializer);
+          pdeCallFfi(
+            generalizedFrbRustBinding,
+            serializer,
+            funcId: 1,
+            port: port_,
+          );
+        },
+        codec: SseCodec(
+          decodeSuccessData: sse_decode_analyze_result,
+          decodeErrorData: sse_decode_String,
+        ),
+        constMeta: kCrateApiAnalyzeAnalyzeMapConstMeta,
+        argValues: [imageBytes, legendBoxes, houghParam2, sourceFilename],
+        apiImpl: this,
+      ),
+    );
+  }
+
+  TaskConstMeta get kCrateApiAnalyzeAnalyzeMapConstMeta => const TaskConstMeta(
+    debugName: "analyze_map",
+    argNames: ["imageBytes", "legendBoxes", "houghParam2", "sourceFilename"],
+  );
+
+  @override
+  Future<CourseResult> crateApiCourseDetectionCourseResultDefault() {
+    return handler.executeNormal(
+      NormalTask(
+        callFfi: (port_) {
+          final serializer = SseSerializer(generalizedFrbRustBinding);
+          pdeCallFfi(
+            generalizedFrbRustBinding,
+            serializer,
+            funcId: 2,
+            port: port_,
+          );
+        },
+        codec: SseCodec(
+          decodeSuccessData: sse_decode_course_result,
+          decodeErrorData: null,
+        ),
+        constMeta: kCrateApiCourseDetectionCourseResultDefaultConstMeta,
+        argValues: [],
+        apiImpl: this,
+      ),
+    );
+  }
+
+  TaskConstMeta get kCrateApiCourseDetectionCourseResultDefaultConstMeta =>
+      const TaskConstMeta(debugName: "course_result_default", argNames: []);
+
+  @override
   String crateApiSimpleGreet({required String name}) {
     return handler.executeSync(
       SyncTask(
         callFfi: () {
           final serializer = SseSerializer(generalizedFrbRustBinding);
           sse_encode_String(name, serializer);
-          return pdeCallFfi(generalizedFrbRustBinding, serializer, funcId: 1)!;
+          return pdeCallFfi(generalizedFrbRustBinding, serializer, funcId: 3)!;
         },
         codec: SseCodec(
           decodeSuccessData: sse_decode_String,
@@ -128,7 +208,7 @@ class RustLibApiImpl extends RustLibApiImplPlatform implements RustLibApi {
           pdeCallFfi(
             generalizedFrbRustBinding,
             serializer,
-            funcId: 2,
+            funcId: 4,
             port: port_,
           );
         },
@@ -158,7 +238,7 @@ class RustLibApiImpl extends RustLibApiImplPlatform implements RustLibApi {
           pdeCallFfi(
             generalizedFrbRustBinding,
             serializer,
-            funcId: 3,
+            funcId: 5,
             port: port_,
           );
         },
@@ -183,15 +263,150 @@ class RustLibApiImpl extends RustLibApiImplPlatform implements RustLibApi {
   }
 
   @protected
+  AnalyzeResult dco_decode_analyze_result(dynamic raw) {
+    // Codec=Dco (DartCObject based), see doc to use other codecs
+    final arr = raw as List<dynamic>;
+    if (arr.length != 11)
+      throw Exception('unexpected arr length: expect 11 but see ${arr.length}');
+    return AnalyzeResult(
+      imagePng: dco_decode_list_prim_u_8_strict(arr[0]),
+      width: dco_decode_i_32(arr[1]),
+      height: dco_decode_i_32(arr[2]),
+      quadFound: dco_decode_bool(arr[3]),
+      mnLineXs: dco_decode_list_prim_f_32_strict(arr[4]),
+      mnLineSpacingPx: dco_decode_opt_box_autoadd_f_32(arr[5]),
+      segmentation: dco_decode_segmentation_result(arr[6]),
+      course: dco_decode_course_result(arr[7]),
+      route: dco_decode_opt_box_autoadd_route_result(arr[8]),
+      routeTerrainBreakdown: dco_decode_list_terrain_fraction(arr[9]),
+      geojson: dco_decode_String(arr[10]),
+    );
+  }
+
+  @protected
   bool dco_decode_bool(dynamic raw) {
     // Codec=Dco (DartCObject based), see doc to use other codecs
     return raw as bool;
   }
 
   @protected
+  double dco_decode_box_autoadd_f_32(dynamic raw) {
+    // Codec=Dco (DartCObject based), see doc to use other codecs
+    return raw as double;
+  }
+
+  @protected
+  Pt dco_decode_box_autoadd_pt(dynamic raw) {
+    // Codec=Dco (DartCObject based), see doc to use other codecs
+    return dco_decode_pt(raw);
+  }
+
+  @protected
+  RouteResult dco_decode_box_autoadd_route_result(dynamic raw) {
+    // Codec=Dco (DartCObject based), see doc to use other codecs
+    return dco_decode_route_result(raw);
+  }
+
+  @protected
+  ClassPolygons dco_decode_class_polygons(dynamic raw) {
+    // Codec=Dco (DartCObject based), see doc to use other codecs
+    final arr = raw as List<dynamic>;
+    if (arr.length != 2)
+      throw Exception('unexpected arr length: expect 2 but see ${arr.length}');
+    return ClassPolygons(
+      className: dco_decode_String(arr[0]),
+      polygons: dco_decode_list_polygon(arr[1]),
+    );
+  }
+
+  @protected
+  Control dco_decode_control(dynamic raw) {
+    // Codec=Dco (DartCObject based), see doc to use other codecs
+    final arr = raw as List<dynamic>;
+    if (arr.length != 4)
+      throw Exception('unexpected arr length: expect 4 but see ${arr.length}');
+    return Control(
+      x: dco_decode_f_32(arr[0]),
+      y: dco_decode_f_32(arr[1]),
+      radius: dco_decode_f_32(arr[2]),
+      code: dco_decode_opt_String(arr[3]),
+    );
+  }
+
+  @protected
+  CourseResult dco_decode_course_result(dynamic raw) {
+    // Codec=Dco (DartCObject based), see doc to use other codecs
+    final arr = raw as List<dynamic>;
+    if (arr.length != 4)
+      throw Exception('unexpected arr length: expect 4 but see ${arr.length}');
+    return CourseResult(
+      controls: dco_decode_list_control(arr[0]),
+      start: dco_decode_opt_box_autoadd_pt(arr[1]),
+      finish: dco_decode_opt_box_autoadd_pt(arr[2]),
+      legs: dco_decode_list_segment(arr[3]),
+    );
+  }
+
+  @protected
+  ExcludeBox dco_decode_exclude_box(dynamic raw) {
+    // Codec=Dco (DartCObject based), see doc to use other codecs
+    final arr = raw as List<dynamic>;
+    if (arr.length != 4)
+      throw Exception('unexpected arr length: expect 4 but see ${arr.length}');
+    return ExcludeBox(
+      x0: dco_decode_f_32(arr[0]),
+      y0: dco_decode_f_32(arr[1]),
+      x1: dco_decode_f_32(arr[2]),
+      y1: dco_decode_f_32(arr[3]),
+    );
+  }
+
+  @protected
+  double dco_decode_f_32(dynamic raw) {
+    // Codec=Dco (DartCObject based), see doc to use other codecs
+    return raw as double;
+  }
+
+  @protected
+  double dco_decode_f_64(dynamic raw) {
+    // Codec=Dco (DartCObject based), see doc to use other codecs
+    return raw as double;
+  }
+
+  @protected
   int dco_decode_i_32(dynamic raw) {
     // Codec=Dco (DartCObject based), see doc to use other codecs
     return raw as int;
+  }
+
+  @protected
+  List<ClassPolygons> dco_decode_list_class_polygons(dynamic raw) {
+    // Codec=Dco (DartCObject based), see doc to use other codecs
+    return (raw as List<dynamic>).map(dco_decode_class_polygons).toList();
+  }
+
+  @protected
+  List<Control> dco_decode_list_control(dynamic raw) {
+    // Codec=Dco (DartCObject based), see doc to use other codecs
+    return (raw as List<dynamic>).map(dco_decode_control).toList();
+  }
+
+  @protected
+  List<ExcludeBox> dco_decode_list_exclude_box(dynamic raw) {
+    // Codec=Dco (DartCObject based), see doc to use other codecs
+    return (raw as List<dynamic>).map(dco_decode_exclude_box).toList();
+  }
+
+  @protected
+  List<Polygon> dco_decode_list_polygon(dynamic raw) {
+    // Codec=Dco (DartCObject based), see doc to use other codecs
+    return (raw as List<dynamic>).map(dco_decode_polygon).toList();
+  }
+
+  @protected
+  Float32List dco_decode_list_prim_f_32_strict(dynamic raw) {
+    // Codec=Dco (DartCObject based), see doc to use other codecs
+    return raw as Float32List;
   }
 
   @protected
@@ -207,16 +422,125 @@ class RustLibApiImpl extends RustLibApiImplPlatform implements RustLibApi {
   }
 
   @protected
+  List<Pt> dco_decode_list_pt(dynamic raw) {
+    // Codec=Dco (DartCObject based), see doc to use other codecs
+    return (raw as List<dynamic>).map(dco_decode_pt).toList();
+  }
+
+  @protected
+  List<Segment> dco_decode_list_segment(dynamic raw) {
+    // Codec=Dco (DartCObject based), see doc to use other codecs
+    return (raw as List<dynamic>).map(dco_decode_segment).toList();
+  }
+
+  @protected
+  List<TerrainFraction> dco_decode_list_terrain_fraction(dynamic raw) {
+    // Codec=Dco (DartCObject based), see doc to use other codecs
+    return (raw as List<dynamic>).map(dco_decode_terrain_fraction).toList();
+  }
+
+  @protected
+  String? dco_decode_opt_String(dynamic raw) {
+    // Codec=Dco (DartCObject based), see doc to use other codecs
+    return raw == null ? null : dco_decode_String(raw);
+  }
+
+  @protected
+  double? dco_decode_opt_box_autoadd_f_32(dynamic raw) {
+    // Codec=Dco (DartCObject based), see doc to use other codecs
+    return raw == null ? null : dco_decode_box_autoadd_f_32(raw);
+  }
+
+  @protected
+  Pt? dco_decode_opt_box_autoadd_pt(dynamic raw) {
+    // Codec=Dco (DartCObject based), see doc to use other codecs
+    return raw == null ? null : dco_decode_box_autoadd_pt(raw);
+  }
+
+  @protected
+  RouteResult? dco_decode_opt_box_autoadd_route_result(dynamic raw) {
+    // Codec=Dco (DartCObject based), see doc to use other codecs
+    return raw == null ? null : dco_decode_box_autoadd_route_result(raw);
+  }
+
+  @protected
+  Polygon dco_decode_polygon(dynamic raw) {
+    // Codec=Dco (DartCObject based), see doc to use other codecs
+    final arr = raw as List<dynamic>;
+    if (arr.length != 1)
+      throw Exception('unexpected arr length: expect 1 but see ${arr.length}');
+    return Polygon(points: dco_decode_list_pt(arr[0]));
+  }
+
+  @protected
+  Pt dco_decode_pt(dynamic raw) {
+    // Codec=Dco (DartCObject based), see doc to use other codecs
+    final arr = raw as List<dynamic>;
+    if (arr.length != 2)
+      throw Exception('unexpected arr length: expect 2 but see ${arr.length}');
+    return Pt(x: dco_decode_f_32(arr[0]), y: dco_decode_f_32(arr[1]));
+  }
+
+  @protected
   RectifyResult dco_decode_rectify_result(dynamic raw) {
     // Codec=Dco (DartCObject based), see doc to use other codecs
     final arr = raw as List<dynamic>;
-    if (arr.length != 4)
-      throw Exception('unexpected arr length: expect 4 but see ${arr.length}');
+    if (arr.length != 7)
+      throw Exception('unexpected arr length: expect 7 but see ${arr.length}');
     return RectifyResult(
       imagePng: dco_decode_list_prim_u_8_strict(arr[0]),
       quadFound: dco_decode_bool(arr[1]),
       width: dco_decode_i_32(arr[2]),
       height: dco_decode_i_32(arr[3]),
+      mnLineXs: dco_decode_list_prim_f_32_strict(arr[4]),
+      mnLineSpacingPx: dco_decode_opt_box_autoadd_f_32(arr[5]),
+      scaleToOriginal: dco_decode_f_32(arr[6]),
+    );
+  }
+
+  @protected
+  RouteResult dco_decode_route_result(dynamic raw) {
+    // Codec=Dco (DartCObject based), see doc to use other codecs
+    final arr = raw as List<dynamic>;
+    if (arr.length != 3)
+      throw Exception('unexpected arr length: expect 3 but see ${arr.length}');
+    return RouteResult(
+      points: dco_decode_list_pt(arr[0]),
+      cost: dco_decode_f_32(arr[1]),
+      recomputedCost: dco_decode_f_32(arr[2]),
+    );
+  }
+
+  @protected
+  Segment dco_decode_segment(dynamic raw) {
+    // Codec=Dco (DartCObject based), see doc to use other codecs
+    final arr = raw as List<dynamic>;
+    if (arr.length != 2)
+      throw Exception('unexpected arr length: expect 2 but see ${arr.length}');
+    return Segment(a: dco_decode_pt(arr[0]), b: dco_decode_pt(arr[1]));
+  }
+
+  @protected
+  SegmentationResult dco_decode_segmentation_result(dynamic raw) {
+    // Codec=Dco (DartCObject based), see doc to use other codecs
+    final arr = raw as List<dynamic>;
+    if (arr.length != 2)
+      throw Exception('unexpected arr length: expect 2 but see ${arr.length}');
+    return SegmentationResult(
+      polygonsByClass: dco_decode_list_class_polygons(arr[0]),
+      paths: dco_decode_list_segment(arr[1]),
+    );
+  }
+
+  @protected
+  TerrainFraction dco_decode_terrain_fraction(dynamic raw) {
+    // Codec=Dco (DartCObject based), see doc to use other codecs
+    final arr = raw as List<dynamic>;
+    if (arr.length != 2)
+      throw Exception('unexpected arr length: expect 2 but see ${arr.length}');
+    return TerrainFraction(
+      className: dco_decode_String(arr[0]),
+      fraction: dco_decode_f_32(arr[1]),
     );
   }
 
@@ -240,15 +564,178 @@ class RustLibApiImpl extends RustLibApiImplPlatform implements RustLibApi {
   }
 
   @protected
+  AnalyzeResult sse_decode_analyze_result(SseDeserializer deserializer) {
+    // Codec=Sse (Serialization based), see doc to use other codecs
+    var var_imagePng = sse_decode_list_prim_u_8_strict(deserializer);
+    var var_width = sse_decode_i_32(deserializer);
+    var var_height = sse_decode_i_32(deserializer);
+    var var_quadFound = sse_decode_bool(deserializer);
+    var var_mnLineXs = sse_decode_list_prim_f_32_strict(deserializer);
+    var var_mnLineSpacingPx = sse_decode_opt_box_autoadd_f_32(deserializer);
+    var var_segmentation = sse_decode_segmentation_result(deserializer);
+    var var_course = sse_decode_course_result(deserializer);
+    var var_route = sse_decode_opt_box_autoadd_route_result(deserializer);
+    var var_routeTerrainBreakdown = sse_decode_list_terrain_fraction(
+      deserializer,
+    );
+    var var_geojson = sse_decode_String(deserializer);
+    return AnalyzeResult(
+      imagePng: var_imagePng,
+      width: var_width,
+      height: var_height,
+      quadFound: var_quadFound,
+      mnLineXs: var_mnLineXs,
+      mnLineSpacingPx: var_mnLineSpacingPx,
+      segmentation: var_segmentation,
+      course: var_course,
+      route: var_route,
+      routeTerrainBreakdown: var_routeTerrainBreakdown,
+      geojson: var_geojson,
+    );
+  }
+
+  @protected
   bool sse_decode_bool(SseDeserializer deserializer) {
     // Codec=Sse (Serialization based), see doc to use other codecs
     return deserializer.buffer.getUint8() != 0;
   }
 
   @protected
+  double sse_decode_box_autoadd_f_32(SseDeserializer deserializer) {
+    // Codec=Sse (Serialization based), see doc to use other codecs
+    return (sse_decode_f_32(deserializer));
+  }
+
+  @protected
+  Pt sse_decode_box_autoadd_pt(SseDeserializer deserializer) {
+    // Codec=Sse (Serialization based), see doc to use other codecs
+    return (sse_decode_pt(deserializer));
+  }
+
+  @protected
+  RouteResult sse_decode_box_autoadd_route_result(
+    SseDeserializer deserializer,
+  ) {
+    // Codec=Sse (Serialization based), see doc to use other codecs
+    return (sse_decode_route_result(deserializer));
+  }
+
+  @protected
+  ClassPolygons sse_decode_class_polygons(SseDeserializer deserializer) {
+    // Codec=Sse (Serialization based), see doc to use other codecs
+    var var_className = sse_decode_String(deserializer);
+    var var_polygons = sse_decode_list_polygon(deserializer);
+    return ClassPolygons(className: var_className, polygons: var_polygons);
+  }
+
+  @protected
+  Control sse_decode_control(SseDeserializer deserializer) {
+    // Codec=Sse (Serialization based), see doc to use other codecs
+    var var_x = sse_decode_f_32(deserializer);
+    var var_y = sse_decode_f_32(deserializer);
+    var var_radius = sse_decode_f_32(deserializer);
+    var var_code = sse_decode_opt_String(deserializer);
+    return Control(x: var_x, y: var_y, radius: var_radius, code: var_code);
+  }
+
+  @protected
+  CourseResult sse_decode_course_result(SseDeserializer deserializer) {
+    // Codec=Sse (Serialization based), see doc to use other codecs
+    var var_controls = sse_decode_list_control(deserializer);
+    var var_start = sse_decode_opt_box_autoadd_pt(deserializer);
+    var var_finish = sse_decode_opt_box_autoadd_pt(deserializer);
+    var var_legs = sse_decode_list_segment(deserializer);
+    return CourseResult(
+      controls: var_controls,
+      start: var_start,
+      finish: var_finish,
+      legs: var_legs,
+    );
+  }
+
+  @protected
+  ExcludeBox sse_decode_exclude_box(SseDeserializer deserializer) {
+    // Codec=Sse (Serialization based), see doc to use other codecs
+    var var_x0 = sse_decode_f_32(deserializer);
+    var var_y0 = sse_decode_f_32(deserializer);
+    var var_x1 = sse_decode_f_32(deserializer);
+    var var_y1 = sse_decode_f_32(deserializer);
+    return ExcludeBox(x0: var_x0, y0: var_y0, x1: var_x1, y1: var_y1);
+  }
+
+  @protected
+  double sse_decode_f_32(SseDeserializer deserializer) {
+    // Codec=Sse (Serialization based), see doc to use other codecs
+    return deserializer.buffer.getFloat32();
+  }
+
+  @protected
+  double sse_decode_f_64(SseDeserializer deserializer) {
+    // Codec=Sse (Serialization based), see doc to use other codecs
+    return deserializer.buffer.getFloat64();
+  }
+
+  @protected
   int sse_decode_i_32(SseDeserializer deserializer) {
     // Codec=Sse (Serialization based), see doc to use other codecs
     return deserializer.buffer.getInt32();
+  }
+
+  @protected
+  List<ClassPolygons> sse_decode_list_class_polygons(
+    SseDeserializer deserializer,
+  ) {
+    // Codec=Sse (Serialization based), see doc to use other codecs
+
+    var len_ = sse_decode_i_32(deserializer);
+    var ans_ = <ClassPolygons>[];
+    for (var idx_ = 0; idx_ < len_; ++idx_) {
+      ans_.add(sse_decode_class_polygons(deserializer));
+    }
+    return ans_;
+  }
+
+  @protected
+  List<Control> sse_decode_list_control(SseDeserializer deserializer) {
+    // Codec=Sse (Serialization based), see doc to use other codecs
+
+    var len_ = sse_decode_i_32(deserializer);
+    var ans_ = <Control>[];
+    for (var idx_ = 0; idx_ < len_; ++idx_) {
+      ans_.add(sse_decode_control(deserializer));
+    }
+    return ans_;
+  }
+
+  @protected
+  List<ExcludeBox> sse_decode_list_exclude_box(SseDeserializer deserializer) {
+    // Codec=Sse (Serialization based), see doc to use other codecs
+
+    var len_ = sse_decode_i_32(deserializer);
+    var ans_ = <ExcludeBox>[];
+    for (var idx_ = 0; idx_ < len_; ++idx_) {
+      ans_.add(sse_decode_exclude_box(deserializer));
+    }
+    return ans_;
+  }
+
+  @protected
+  List<Polygon> sse_decode_list_polygon(SseDeserializer deserializer) {
+    // Codec=Sse (Serialization based), see doc to use other codecs
+
+    var len_ = sse_decode_i_32(deserializer);
+    var ans_ = <Polygon>[];
+    for (var idx_ = 0; idx_ < len_; ++idx_) {
+      ans_.add(sse_decode_polygon(deserializer));
+    }
+    return ans_;
+  }
+
+  @protected
+  Float32List sse_decode_list_prim_f_32_strict(SseDeserializer deserializer) {
+    // Codec=Sse (Serialization based), see doc to use other codecs
+    var len_ = sse_decode_i_32(deserializer);
+    return deserializer.buffer.getFloat32List(len_);
   }
 
   @protected
@@ -266,18 +753,165 @@ class RustLibApiImpl extends RustLibApiImplPlatform implements RustLibApi {
   }
 
   @protected
+  List<Pt> sse_decode_list_pt(SseDeserializer deserializer) {
+    // Codec=Sse (Serialization based), see doc to use other codecs
+
+    var len_ = sse_decode_i_32(deserializer);
+    var ans_ = <Pt>[];
+    for (var idx_ = 0; idx_ < len_; ++idx_) {
+      ans_.add(sse_decode_pt(deserializer));
+    }
+    return ans_;
+  }
+
+  @protected
+  List<Segment> sse_decode_list_segment(SseDeserializer deserializer) {
+    // Codec=Sse (Serialization based), see doc to use other codecs
+
+    var len_ = sse_decode_i_32(deserializer);
+    var ans_ = <Segment>[];
+    for (var idx_ = 0; idx_ < len_; ++idx_) {
+      ans_.add(sse_decode_segment(deserializer));
+    }
+    return ans_;
+  }
+
+  @protected
+  List<TerrainFraction> sse_decode_list_terrain_fraction(
+    SseDeserializer deserializer,
+  ) {
+    // Codec=Sse (Serialization based), see doc to use other codecs
+
+    var len_ = sse_decode_i_32(deserializer);
+    var ans_ = <TerrainFraction>[];
+    for (var idx_ = 0; idx_ < len_; ++idx_) {
+      ans_.add(sse_decode_terrain_fraction(deserializer));
+    }
+    return ans_;
+  }
+
+  @protected
+  String? sse_decode_opt_String(SseDeserializer deserializer) {
+    // Codec=Sse (Serialization based), see doc to use other codecs
+
+    if (sse_decode_bool(deserializer)) {
+      return (sse_decode_String(deserializer));
+    } else {
+      return null;
+    }
+  }
+
+  @protected
+  double? sse_decode_opt_box_autoadd_f_32(SseDeserializer deserializer) {
+    // Codec=Sse (Serialization based), see doc to use other codecs
+
+    if (sse_decode_bool(deserializer)) {
+      return (sse_decode_box_autoadd_f_32(deserializer));
+    } else {
+      return null;
+    }
+  }
+
+  @protected
+  Pt? sse_decode_opt_box_autoadd_pt(SseDeserializer deserializer) {
+    // Codec=Sse (Serialization based), see doc to use other codecs
+
+    if (sse_decode_bool(deserializer)) {
+      return (sse_decode_box_autoadd_pt(deserializer));
+    } else {
+      return null;
+    }
+  }
+
+  @protected
+  RouteResult? sse_decode_opt_box_autoadd_route_result(
+    SseDeserializer deserializer,
+  ) {
+    // Codec=Sse (Serialization based), see doc to use other codecs
+
+    if (sse_decode_bool(deserializer)) {
+      return (sse_decode_box_autoadd_route_result(deserializer));
+    } else {
+      return null;
+    }
+  }
+
+  @protected
+  Polygon sse_decode_polygon(SseDeserializer deserializer) {
+    // Codec=Sse (Serialization based), see doc to use other codecs
+    var var_points = sse_decode_list_pt(deserializer);
+    return Polygon(points: var_points);
+  }
+
+  @protected
+  Pt sse_decode_pt(SseDeserializer deserializer) {
+    // Codec=Sse (Serialization based), see doc to use other codecs
+    var var_x = sse_decode_f_32(deserializer);
+    var var_y = sse_decode_f_32(deserializer);
+    return Pt(x: var_x, y: var_y);
+  }
+
+  @protected
   RectifyResult sse_decode_rectify_result(SseDeserializer deserializer) {
     // Codec=Sse (Serialization based), see doc to use other codecs
     var var_imagePng = sse_decode_list_prim_u_8_strict(deserializer);
     var var_quadFound = sse_decode_bool(deserializer);
     var var_width = sse_decode_i_32(deserializer);
     var var_height = sse_decode_i_32(deserializer);
+    var var_mnLineXs = sse_decode_list_prim_f_32_strict(deserializer);
+    var var_mnLineSpacingPx = sse_decode_opt_box_autoadd_f_32(deserializer);
+    var var_scaleToOriginal = sse_decode_f_32(deserializer);
     return RectifyResult(
       imagePng: var_imagePng,
       quadFound: var_quadFound,
       width: var_width,
       height: var_height,
+      mnLineXs: var_mnLineXs,
+      mnLineSpacingPx: var_mnLineSpacingPx,
+      scaleToOriginal: var_scaleToOriginal,
     );
+  }
+
+  @protected
+  RouteResult sse_decode_route_result(SseDeserializer deserializer) {
+    // Codec=Sse (Serialization based), see doc to use other codecs
+    var var_points = sse_decode_list_pt(deserializer);
+    var var_cost = sse_decode_f_32(deserializer);
+    var var_recomputedCost = sse_decode_f_32(deserializer);
+    return RouteResult(
+      points: var_points,
+      cost: var_cost,
+      recomputedCost: var_recomputedCost,
+    );
+  }
+
+  @protected
+  Segment sse_decode_segment(SseDeserializer deserializer) {
+    // Codec=Sse (Serialization based), see doc to use other codecs
+    var var_a = sse_decode_pt(deserializer);
+    var var_b = sse_decode_pt(deserializer);
+    return Segment(a: var_a, b: var_b);
+  }
+
+  @protected
+  SegmentationResult sse_decode_segmentation_result(
+    SseDeserializer deserializer,
+  ) {
+    // Codec=Sse (Serialization based), see doc to use other codecs
+    var var_polygonsByClass = sse_decode_list_class_polygons(deserializer);
+    var var_paths = sse_decode_list_segment(deserializer);
+    return SegmentationResult(
+      polygonsByClass: var_polygonsByClass,
+      paths: var_paths,
+    );
+  }
+
+  @protected
+  TerrainFraction sse_decode_terrain_fraction(SseDeserializer deserializer) {
+    // Codec=Sse (Serialization based), see doc to use other codecs
+    var var_className = sse_decode_String(deserializer);
+    var var_fraction = sse_decode_f_32(deserializer);
+    return TerrainFraction(className: var_className, fraction: var_fraction);
   }
 
   @protected
@@ -298,15 +932,150 @@ class RustLibApiImpl extends RustLibApiImplPlatform implements RustLibApi {
   }
 
   @protected
+  void sse_encode_analyze_result(AnalyzeResult self, SseSerializer serializer) {
+    // Codec=Sse (Serialization based), see doc to use other codecs
+    sse_encode_list_prim_u_8_strict(self.imagePng, serializer);
+    sse_encode_i_32(self.width, serializer);
+    sse_encode_i_32(self.height, serializer);
+    sse_encode_bool(self.quadFound, serializer);
+    sse_encode_list_prim_f_32_strict(self.mnLineXs, serializer);
+    sse_encode_opt_box_autoadd_f_32(self.mnLineSpacingPx, serializer);
+    sse_encode_segmentation_result(self.segmentation, serializer);
+    sse_encode_course_result(self.course, serializer);
+    sse_encode_opt_box_autoadd_route_result(self.route, serializer);
+    sse_encode_list_terrain_fraction(self.routeTerrainBreakdown, serializer);
+    sse_encode_String(self.geojson, serializer);
+  }
+
+  @protected
   void sse_encode_bool(bool self, SseSerializer serializer) {
     // Codec=Sse (Serialization based), see doc to use other codecs
     serializer.buffer.putUint8(self ? 1 : 0);
   }
 
   @protected
+  void sse_encode_box_autoadd_f_32(double self, SseSerializer serializer) {
+    // Codec=Sse (Serialization based), see doc to use other codecs
+    sse_encode_f_32(self, serializer);
+  }
+
+  @protected
+  void sse_encode_box_autoadd_pt(Pt self, SseSerializer serializer) {
+    // Codec=Sse (Serialization based), see doc to use other codecs
+    sse_encode_pt(self, serializer);
+  }
+
+  @protected
+  void sse_encode_box_autoadd_route_result(
+    RouteResult self,
+    SseSerializer serializer,
+  ) {
+    // Codec=Sse (Serialization based), see doc to use other codecs
+    sse_encode_route_result(self, serializer);
+  }
+
+  @protected
+  void sse_encode_class_polygons(ClassPolygons self, SseSerializer serializer) {
+    // Codec=Sse (Serialization based), see doc to use other codecs
+    sse_encode_String(self.className, serializer);
+    sse_encode_list_polygon(self.polygons, serializer);
+  }
+
+  @protected
+  void sse_encode_control(Control self, SseSerializer serializer) {
+    // Codec=Sse (Serialization based), see doc to use other codecs
+    sse_encode_f_32(self.x, serializer);
+    sse_encode_f_32(self.y, serializer);
+    sse_encode_f_32(self.radius, serializer);
+    sse_encode_opt_String(self.code, serializer);
+  }
+
+  @protected
+  void sse_encode_course_result(CourseResult self, SseSerializer serializer) {
+    // Codec=Sse (Serialization based), see doc to use other codecs
+    sse_encode_list_control(self.controls, serializer);
+    sse_encode_opt_box_autoadd_pt(self.start, serializer);
+    sse_encode_opt_box_autoadd_pt(self.finish, serializer);
+    sse_encode_list_segment(self.legs, serializer);
+  }
+
+  @protected
+  void sse_encode_exclude_box(ExcludeBox self, SseSerializer serializer) {
+    // Codec=Sse (Serialization based), see doc to use other codecs
+    sse_encode_f_32(self.x0, serializer);
+    sse_encode_f_32(self.y0, serializer);
+    sse_encode_f_32(self.x1, serializer);
+    sse_encode_f_32(self.y1, serializer);
+  }
+
+  @protected
+  void sse_encode_f_32(double self, SseSerializer serializer) {
+    // Codec=Sse (Serialization based), see doc to use other codecs
+    serializer.buffer.putFloat32(self);
+  }
+
+  @protected
+  void sse_encode_f_64(double self, SseSerializer serializer) {
+    // Codec=Sse (Serialization based), see doc to use other codecs
+    serializer.buffer.putFloat64(self);
+  }
+
+  @protected
   void sse_encode_i_32(int self, SseSerializer serializer) {
     // Codec=Sse (Serialization based), see doc to use other codecs
     serializer.buffer.putInt32(self);
+  }
+
+  @protected
+  void sse_encode_list_class_polygons(
+    List<ClassPolygons> self,
+    SseSerializer serializer,
+  ) {
+    // Codec=Sse (Serialization based), see doc to use other codecs
+    sse_encode_i_32(self.length, serializer);
+    for (final item in self) {
+      sse_encode_class_polygons(item, serializer);
+    }
+  }
+
+  @protected
+  void sse_encode_list_control(List<Control> self, SseSerializer serializer) {
+    // Codec=Sse (Serialization based), see doc to use other codecs
+    sse_encode_i_32(self.length, serializer);
+    for (final item in self) {
+      sse_encode_control(item, serializer);
+    }
+  }
+
+  @protected
+  void sse_encode_list_exclude_box(
+    List<ExcludeBox> self,
+    SseSerializer serializer,
+  ) {
+    // Codec=Sse (Serialization based), see doc to use other codecs
+    sse_encode_i_32(self.length, serializer);
+    for (final item in self) {
+      sse_encode_exclude_box(item, serializer);
+    }
+  }
+
+  @protected
+  void sse_encode_list_polygon(List<Polygon> self, SseSerializer serializer) {
+    // Codec=Sse (Serialization based), see doc to use other codecs
+    sse_encode_i_32(self.length, serializer);
+    for (final item in self) {
+      sse_encode_polygon(item, serializer);
+    }
+  }
+
+  @protected
+  void sse_encode_list_prim_f_32_strict(
+    Float32List self,
+    SseSerializer serializer,
+  ) {
+    // Codec=Sse (Serialization based), see doc to use other codecs
+    sse_encode_i_32(self.length, serializer);
+    serializer.buffer.putFloat32List(self);
   }
 
   @protected
@@ -332,12 +1101,136 @@ class RustLibApiImpl extends RustLibApiImplPlatform implements RustLibApi {
   }
 
   @protected
+  void sse_encode_list_pt(List<Pt> self, SseSerializer serializer) {
+    // Codec=Sse (Serialization based), see doc to use other codecs
+    sse_encode_i_32(self.length, serializer);
+    for (final item in self) {
+      sse_encode_pt(item, serializer);
+    }
+  }
+
+  @protected
+  void sse_encode_list_segment(List<Segment> self, SseSerializer serializer) {
+    // Codec=Sse (Serialization based), see doc to use other codecs
+    sse_encode_i_32(self.length, serializer);
+    for (final item in self) {
+      sse_encode_segment(item, serializer);
+    }
+  }
+
+  @protected
+  void sse_encode_list_terrain_fraction(
+    List<TerrainFraction> self,
+    SseSerializer serializer,
+  ) {
+    // Codec=Sse (Serialization based), see doc to use other codecs
+    sse_encode_i_32(self.length, serializer);
+    for (final item in self) {
+      sse_encode_terrain_fraction(item, serializer);
+    }
+  }
+
+  @protected
+  void sse_encode_opt_String(String? self, SseSerializer serializer) {
+    // Codec=Sse (Serialization based), see doc to use other codecs
+
+    sse_encode_bool(self != null, serializer);
+    if (self != null) {
+      sse_encode_String(self, serializer);
+    }
+  }
+
+  @protected
+  void sse_encode_opt_box_autoadd_f_32(double? self, SseSerializer serializer) {
+    // Codec=Sse (Serialization based), see doc to use other codecs
+
+    sse_encode_bool(self != null, serializer);
+    if (self != null) {
+      sse_encode_box_autoadd_f_32(self, serializer);
+    }
+  }
+
+  @protected
+  void sse_encode_opt_box_autoadd_pt(Pt? self, SseSerializer serializer) {
+    // Codec=Sse (Serialization based), see doc to use other codecs
+
+    sse_encode_bool(self != null, serializer);
+    if (self != null) {
+      sse_encode_box_autoadd_pt(self, serializer);
+    }
+  }
+
+  @protected
+  void sse_encode_opt_box_autoadd_route_result(
+    RouteResult? self,
+    SseSerializer serializer,
+  ) {
+    // Codec=Sse (Serialization based), see doc to use other codecs
+
+    sse_encode_bool(self != null, serializer);
+    if (self != null) {
+      sse_encode_box_autoadd_route_result(self, serializer);
+    }
+  }
+
+  @protected
+  void sse_encode_polygon(Polygon self, SseSerializer serializer) {
+    // Codec=Sse (Serialization based), see doc to use other codecs
+    sse_encode_list_pt(self.points, serializer);
+  }
+
+  @protected
+  void sse_encode_pt(Pt self, SseSerializer serializer) {
+    // Codec=Sse (Serialization based), see doc to use other codecs
+    sse_encode_f_32(self.x, serializer);
+    sse_encode_f_32(self.y, serializer);
+  }
+
+  @protected
   void sse_encode_rectify_result(RectifyResult self, SseSerializer serializer) {
     // Codec=Sse (Serialization based), see doc to use other codecs
     sse_encode_list_prim_u_8_strict(self.imagePng, serializer);
     sse_encode_bool(self.quadFound, serializer);
     sse_encode_i_32(self.width, serializer);
     sse_encode_i_32(self.height, serializer);
+    sse_encode_list_prim_f_32_strict(self.mnLineXs, serializer);
+    sse_encode_opt_box_autoadd_f_32(self.mnLineSpacingPx, serializer);
+    sse_encode_f_32(self.scaleToOriginal, serializer);
+  }
+
+  @protected
+  void sse_encode_route_result(RouteResult self, SseSerializer serializer) {
+    // Codec=Sse (Serialization based), see doc to use other codecs
+    sse_encode_list_pt(self.points, serializer);
+    sse_encode_f_32(self.cost, serializer);
+    sse_encode_f_32(self.recomputedCost, serializer);
+  }
+
+  @protected
+  void sse_encode_segment(Segment self, SseSerializer serializer) {
+    // Codec=Sse (Serialization based), see doc to use other codecs
+    sse_encode_pt(self.a, serializer);
+    sse_encode_pt(self.b, serializer);
+  }
+
+  @protected
+  void sse_encode_segmentation_result(
+    SegmentationResult self,
+    SseSerializer serializer,
+  ) {
+    // Codec=Sse (Serialization based), see doc to use other codecs
+    sse_encode_list_class_polygons(self.polygonsByClass, serializer);
+    sse_encode_list_segment(self.paths, serializer);
+  }
+
+  @protected
+  void sse_encode_terrain_fraction(
+    TerrainFraction self,
+    SseSerializer serializer,
+  ) {
+    // Codec=Sse (Serialization based), see doc to use other codecs
+    sse_encode_String(self.className, serializer);
+    sse_encode_f_32(self.fraction, serializer);
   }
 
   @protected

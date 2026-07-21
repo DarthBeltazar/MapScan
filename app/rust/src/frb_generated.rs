@@ -38,7 +38,7 @@ flutter_rust_bridge::frb_generated_boilerplate!(
     default_rust_auto_opaque = RustAutoOpaqueMoi,
 );
 pub(crate) const FLUTTER_RUST_BRIDGE_CODEGEN_VERSION: &str = "2.12.0";
-pub(crate) const FLUTTER_RUST_BRIDGE_CODEGEN_CONTENT_HASH: i32 = -1389451345;
+pub(crate) const FLUTTER_RUST_BRIDGE_CODEGEN_CONTENT_HASH: i32 = -1223567005;
 
 // Section: executor
 
@@ -46,6 +46,81 @@ flutter_rust_bridge::frb_generated_default_handler!();
 
 // Section: wire_funcs
 
+fn wire__crate__api__analyze__analyze_map_impl(
+    port_: flutter_rust_bridge::for_generated::MessagePort,
+    ptr_: flutter_rust_bridge::for_generated::PlatformGeneralizedUint8ListPtr,
+    rust_vec_len_: i32,
+    data_len_: i32,
+) {
+    FLUTTER_RUST_BRIDGE_HANDLER.wrap_normal::<flutter_rust_bridge::for_generated::SseCodec, _, _>(
+        flutter_rust_bridge::for_generated::TaskInfo {
+            debug_name: "analyze_map",
+            port: Some(port_),
+            mode: flutter_rust_bridge::for_generated::FfiCallMode::Normal,
+        },
+        move || {
+            let message = unsafe {
+                flutter_rust_bridge::for_generated::Dart2RustMessageSse::from_wire(
+                    ptr_,
+                    rust_vec_len_,
+                    data_len_,
+                )
+            };
+            let mut deserializer =
+                flutter_rust_bridge::for_generated::SseDeserializer::new(message);
+            let api_image_bytes = <Vec<u8>>::sse_decode(&mut deserializer);
+            let api_legend_boxes =
+                <Vec<crate::api::segmentation::ExcludeBox>>::sse_decode(&mut deserializer);
+            let api_hough_param2 = <f64>::sse_decode(&mut deserializer);
+            let api_source_filename = <Option<String>>::sse_decode(&mut deserializer);
+            deserializer.end();
+            move |context| {
+                transform_result_sse::<_, String>((move || {
+                    let output_ok = crate::api::analyze::analyze_map(
+                        api_image_bytes,
+                        api_legend_boxes,
+                        api_hough_param2,
+                        api_source_filename,
+                    )?;
+                    Ok(output_ok)
+                })())
+            }
+        },
+    )
+}
+fn wire__crate__api__course_detection__course_result_default_impl(
+    port_: flutter_rust_bridge::for_generated::MessagePort,
+    ptr_: flutter_rust_bridge::for_generated::PlatformGeneralizedUint8ListPtr,
+    rust_vec_len_: i32,
+    data_len_: i32,
+) {
+    FLUTTER_RUST_BRIDGE_HANDLER.wrap_normal::<flutter_rust_bridge::for_generated::SseCodec, _, _>(
+        flutter_rust_bridge::for_generated::TaskInfo {
+            debug_name: "course_result_default",
+            port: Some(port_),
+            mode: flutter_rust_bridge::for_generated::FfiCallMode::Normal,
+        },
+        move || {
+            let message = unsafe {
+                flutter_rust_bridge::for_generated::Dart2RustMessageSse::from_wire(
+                    ptr_,
+                    rust_vec_len_,
+                    data_len_,
+                )
+            };
+            let mut deserializer =
+                flutter_rust_bridge::for_generated::SseDeserializer::new(message);
+            deserializer.end();
+            move |context| {
+                transform_result_sse::<_, ()>((move || {
+                    let output_ok =
+                        Result::<_, ()>::Ok(crate::api::course_detection::CourseResult::default())?;
+                    Ok(output_ok)
+                })())
+            }
+        },
+    )
+}
 fn wire__crate__api__simple__greet_impl(
     ptr_: flutter_rust_bridge::for_generated::PlatformGeneralizedUint8ListPtr,
     rust_vec_len_: i32,
@@ -154,6 +229,39 @@ impl SseDecode for String {
     }
 }
 
+impl SseDecode for crate::api::analyze::AnalyzeResult {
+    // Codec=Sse (Serialization based), see doc to use other codecs
+    fn sse_decode(deserializer: &mut flutter_rust_bridge::for_generated::SseDeserializer) -> Self {
+        let mut var_imagePng = <Vec<u8>>::sse_decode(deserializer);
+        let mut var_width = <i32>::sse_decode(deserializer);
+        let mut var_height = <i32>::sse_decode(deserializer);
+        let mut var_quadFound = <bool>::sse_decode(deserializer);
+        let mut var_mnLineXs = <Vec<f32>>::sse_decode(deserializer);
+        let mut var_mnLineSpacingPx = <Option<f32>>::sse_decode(deserializer);
+        let mut var_segmentation =
+            <crate::api::segmentation::SegmentationResult>::sse_decode(deserializer);
+        let mut var_course = <crate::api::course_detection::CourseResult>::sse_decode(deserializer);
+        let mut var_route =
+            <Option<crate::api::pathfinding::RouteResult>>::sse_decode(deserializer);
+        let mut var_routeTerrainBreakdown =
+            <Vec<crate::api::cost_grid::TerrainFraction>>::sse_decode(deserializer);
+        let mut var_geojson = <String>::sse_decode(deserializer);
+        return crate::api::analyze::AnalyzeResult {
+            image_png: var_imagePng,
+            width: var_width,
+            height: var_height,
+            quad_found: var_quadFound,
+            mn_line_xs: var_mnLineXs,
+            mn_line_spacing_px: var_mnLineSpacingPx,
+            segmentation: var_segmentation,
+            course: var_course,
+            route: var_route,
+            route_terrain_breakdown: var_routeTerrainBreakdown,
+            geojson: var_geojson,
+        };
+    }
+}
+
 impl SseDecode for bool {
     // Codec=Sse (Serialization based), see doc to use other codecs
     fn sse_decode(deserializer: &mut flutter_rust_bridge::for_generated::SseDeserializer) -> Self {
@@ -161,10 +269,151 @@ impl SseDecode for bool {
     }
 }
 
+impl SseDecode for crate::api::segmentation::ClassPolygons {
+    // Codec=Sse (Serialization based), see doc to use other codecs
+    fn sse_decode(deserializer: &mut flutter_rust_bridge::for_generated::SseDeserializer) -> Self {
+        let mut var_className = <String>::sse_decode(deserializer);
+        let mut var_polygons = <Vec<crate::api::geometry::Polygon>>::sse_decode(deserializer);
+        return crate::api::segmentation::ClassPolygons {
+            class_name: var_className,
+            polygons: var_polygons,
+        };
+    }
+}
+
+impl SseDecode for crate::api::course_detection::Control {
+    // Codec=Sse (Serialization based), see doc to use other codecs
+    fn sse_decode(deserializer: &mut flutter_rust_bridge::for_generated::SseDeserializer) -> Self {
+        let mut var_x = <f32>::sse_decode(deserializer);
+        let mut var_y = <f32>::sse_decode(deserializer);
+        let mut var_radius = <f32>::sse_decode(deserializer);
+        let mut var_code = <Option<String>>::sse_decode(deserializer);
+        return crate::api::course_detection::Control {
+            x: var_x,
+            y: var_y,
+            radius: var_radius,
+            code: var_code,
+        };
+    }
+}
+
+impl SseDecode for crate::api::course_detection::CourseResult {
+    // Codec=Sse (Serialization based), see doc to use other codecs
+    fn sse_decode(deserializer: &mut flutter_rust_bridge::for_generated::SseDeserializer) -> Self {
+        let mut var_controls =
+            <Vec<crate::api::course_detection::Control>>::sse_decode(deserializer);
+        let mut var_start = <Option<crate::api::geometry::Pt>>::sse_decode(deserializer);
+        let mut var_finish = <Option<crate::api::geometry::Pt>>::sse_decode(deserializer);
+        let mut var_legs = <Vec<crate::api::geometry::Segment>>::sse_decode(deserializer);
+        return crate::api::course_detection::CourseResult {
+            controls: var_controls,
+            start: var_start,
+            finish: var_finish,
+            legs: var_legs,
+        };
+    }
+}
+
+impl SseDecode for crate::api::segmentation::ExcludeBox {
+    // Codec=Sse (Serialization based), see doc to use other codecs
+    fn sse_decode(deserializer: &mut flutter_rust_bridge::for_generated::SseDeserializer) -> Self {
+        let mut var_x0 = <f32>::sse_decode(deserializer);
+        let mut var_y0 = <f32>::sse_decode(deserializer);
+        let mut var_x1 = <f32>::sse_decode(deserializer);
+        let mut var_y1 = <f32>::sse_decode(deserializer);
+        return crate::api::segmentation::ExcludeBox {
+            x0: var_x0,
+            y0: var_y0,
+            x1: var_x1,
+            y1: var_y1,
+        };
+    }
+}
+
+impl SseDecode for f32 {
+    // Codec=Sse (Serialization based), see doc to use other codecs
+    fn sse_decode(deserializer: &mut flutter_rust_bridge::for_generated::SseDeserializer) -> Self {
+        deserializer.cursor.read_f32::<NativeEndian>().unwrap()
+    }
+}
+
+impl SseDecode for f64 {
+    // Codec=Sse (Serialization based), see doc to use other codecs
+    fn sse_decode(deserializer: &mut flutter_rust_bridge::for_generated::SseDeserializer) -> Self {
+        deserializer.cursor.read_f64::<NativeEndian>().unwrap()
+    }
+}
+
 impl SseDecode for i32 {
     // Codec=Sse (Serialization based), see doc to use other codecs
     fn sse_decode(deserializer: &mut flutter_rust_bridge::for_generated::SseDeserializer) -> Self {
         deserializer.cursor.read_i32::<NativeEndian>().unwrap()
+    }
+}
+
+impl SseDecode for Vec<crate::api::segmentation::ClassPolygons> {
+    // Codec=Sse (Serialization based), see doc to use other codecs
+    fn sse_decode(deserializer: &mut flutter_rust_bridge::for_generated::SseDeserializer) -> Self {
+        let mut len_ = <i32>::sse_decode(deserializer);
+        let mut ans_ = Vec::with_capacity(len_ as usize);
+        for idx_ in 0..len_ {
+            ans_.push(<crate::api::segmentation::ClassPolygons>::sse_decode(
+                deserializer,
+            ));
+        }
+        return ans_;
+    }
+}
+
+impl SseDecode for Vec<crate::api::course_detection::Control> {
+    // Codec=Sse (Serialization based), see doc to use other codecs
+    fn sse_decode(deserializer: &mut flutter_rust_bridge::for_generated::SseDeserializer) -> Self {
+        let mut len_ = <i32>::sse_decode(deserializer);
+        let mut ans_ = Vec::with_capacity(len_ as usize);
+        for idx_ in 0..len_ {
+            ans_.push(<crate::api::course_detection::Control>::sse_decode(
+                deserializer,
+            ));
+        }
+        return ans_;
+    }
+}
+
+impl SseDecode for Vec<crate::api::segmentation::ExcludeBox> {
+    // Codec=Sse (Serialization based), see doc to use other codecs
+    fn sse_decode(deserializer: &mut flutter_rust_bridge::for_generated::SseDeserializer) -> Self {
+        let mut len_ = <i32>::sse_decode(deserializer);
+        let mut ans_ = Vec::with_capacity(len_ as usize);
+        for idx_ in 0..len_ {
+            ans_.push(<crate::api::segmentation::ExcludeBox>::sse_decode(
+                deserializer,
+            ));
+        }
+        return ans_;
+    }
+}
+
+impl SseDecode for Vec<crate::api::geometry::Polygon> {
+    // Codec=Sse (Serialization based), see doc to use other codecs
+    fn sse_decode(deserializer: &mut flutter_rust_bridge::for_generated::SseDeserializer) -> Self {
+        let mut len_ = <i32>::sse_decode(deserializer);
+        let mut ans_ = Vec::with_capacity(len_ as usize);
+        for idx_ in 0..len_ {
+            ans_.push(<crate::api::geometry::Polygon>::sse_decode(deserializer));
+        }
+        return ans_;
+    }
+}
+
+impl SseDecode for Vec<f32> {
+    // Codec=Sse (Serialization based), see doc to use other codecs
+    fn sse_decode(deserializer: &mut flutter_rust_bridge::for_generated::SseDeserializer) -> Self {
+        let mut len_ = <i32>::sse_decode(deserializer);
+        let mut ans_ = Vec::with_capacity(len_ as usize);
+        for idx_ in 0..len_ {
+            ans_.push(<f32>::sse_decode(deserializer));
+        }
+        return ans_;
     }
 }
 
@@ -180,6 +429,107 @@ impl SseDecode for Vec<u8> {
     }
 }
 
+impl SseDecode for Vec<crate::api::geometry::Pt> {
+    // Codec=Sse (Serialization based), see doc to use other codecs
+    fn sse_decode(deserializer: &mut flutter_rust_bridge::for_generated::SseDeserializer) -> Self {
+        let mut len_ = <i32>::sse_decode(deserializer);
+        let mut ans_ = Vec::with_capacity(len_ as usize);
+        for idx_ in 0..len_ {
+            ans_.push(<crate::api::geometry::Pt>::sse_decode(deserializer));
+        }
+        return ans_;
+    }
+}
+
+impl SseDecode for Vec<crate::api::geometry::Segment> {
+    // Codec=Sse (Serialization based), see doc to use other codecs
+    fn sse_decode(deserializer: &mut flutter_rust_bridge::for_generated::SseDeserializer) -> Self {
+        let mut len_ = <i32>::sse_decode(deserializer);
+        let mut ans_ = Vec::with_capacity(len_ as usize);
+        for idx_ in 0..len_ {
+            ans_.push(<crate::api::geometry::Segment>::sse_decode(deserializer));
+        }
+        return ans_;
+    }
+}
+
+impl SseDecode for Vec<crate::api::cost_grid::TerrainFraction> {
+    // Codec=Sse (Serialization based), see doc to use other codecs
+    fn sse_decode(deserializer: &mut flutter_rust_bridge::for_generated::SseDeserializer) -> Self {
+        let mut len_ = <i32>::sse_decode(deserializer);
+        let mut ans_ = Vec::with_capacity(len_ as usize);
+        for idx_ in 0..len_ {
+            ans_.push(<crate::api::cost_grid::TerrainFraction>::sse_decode(
+                deserializer,
+            ));
+        }
+        return ans_;
+    }
+}
+
+impl SseDecode for Option<String> {
+    // Codec=Sse (Serialization based), see doc to use other codecs
+    fn sse_decode(deserializer: &mut flutter_rust_bridge::for_generated::SseDeserializer) -> Self {
+        if (<bool>::sse_decode(deserializer)) {
+            return Some(<String>::sse_decode(deserializer));
+        } else {
+            return None;
+        }
+    }
+}
+
+impl SseDecode for Option<f32> {
+    // Codec=Sse (Serialization based), see doc to use other codecs
+    fn sse_decode(deserializer: &mut flutter_rust_bridge::for_generated::SseDeserializer) -> Self {
+        if (<bool>::sse_decode(deserializer)) {
+            return Some(<f32>::sse_decode(deserializer));
+        } else {
+            return None;
+        }
+    }
+}
+
+impl SseDecode for Option<crate::api::geometry::Pt> {
+    // Codec=Sse (Serialization based), see doc to use other codecs
+    fn sse_decode(deserializer: &mut flutter_rust_bridge::for_generated::SseDeserializer) -> Self {
+        if (<bool>::sse_decode(deserializer)) {
+            return Some(<crate::api::geometry::Pt>::sse_decode(deserializer));
+        } else {
+            return None;
+        }
+    }
+}
+
+impl SseDecode for Option<crate::api::pathfinding::RouteResult> {
+    // Codec=Sse (Serialization based), see doc to use other codecs
+    fn sse_decode(deserializer: &mut flutter_rust_bridge::for_generated::SseDeserializer) -> Self {
+        if (<bool>::sse_decode(deserializer)) {
+            return Some(<crate::api::pathfinding::RouteResult>::sse_decode(
+                deserializer,
+            ));
+        } else {
+            return None;
+        }
+    }
+}
+
+impl SseDecode for crate::api::geometry::Polygon {
+    // Codec=Sse (Serialization based), see doc to use other codecs
+    fn sse_decode(deserializer: &mut flutter_rust_bridge::for_generated::SseDeserializer) -> Self {
+        let mut var_points = <Vec<crate::api::geometry::Pt>>::sse_decode(deserializer);
+        return crate::api::geometry::Polygon { points: var_points };
+    }
+}
+
+impl SseDecode for crate::api::geometry::Pt {
+    // Codec=Sse (Serialization based), see doc to use other codecs
+    fn sse_decode(deserializer: &mut flutter_rust_bridge::for_generated::SseDeserializer) -> Self {
+        let mut var_x = <f32>::sse_decode(deserializer);
+        let mut var_y = <f32>::sse_decode(deserializer);
+        return crate::api::geometry::Pt { x: var_x, y: var_y };
+    }
+}
+
 impl SseDecode for crate::api::preprocessing::RectifyResult {
     // Codec=Sse (Serialization based), see doc to use other codecs
     fn sse_decode(deserializer: &mut flutter_rust_bridge::for_generated::SseDeserializer) -> Self {
@@ -187,11 +537,65 @@ impl SseDecode for crate::api::preprocessing::RectifyResult {
         let mut var_quadFound = <bool>::sse_decode(deserializer);
         let mut var_width = <i32>::sse_decode(deserializer);
         let mut var_height = <i32>::sse_decode(deserializer);
+        let mut var_mnLineXs = <Vec<f32>>::sse_decode(deserializer);
+        let mut var_mnLineSpacingPx = <Option<f32>>::sse_decode(deserializer);
+        let mut var_scaleToOriginal = <f32>::sse_decode(deserializer);
         return crate::api::preprocessing::RectifyResult {
             image_png: var_imagePng,
             quad_found: var_quadFound,
             width: var_width,
             height: var_height,
+            mn_line_xs: var_mnLineXs,
+            mn_line_spacing_px: var_mnLineSpacingPx,
+            scale_to_original: var_scaleToOriginal,
+        };
+    }
+}
+
+impl SseDecode for crate::api::pathfinding::RouteResult {
+    // Codec=Sse (Serialization based), see doc to use other codecs
+    fn sse_decode(deserializer: &mut flutter_rust_bridge::for_generated::SseDeserializer) -> Self {
+        let mut var_points = <Vec<crate::api::geometry::Pt>>::sse_decode(deserializer);
+        let mut var_cost = <f32>::sse_decode(deserializer);
+        let mut var_recomputedCost = <f32>::sse_decode(deserializer);
+        return crate::api::pathfinding::RouteResult {
+            points: var_points,
+            cost: var_cost,
+            recomputed_cost: var_recomputedCost,
+        };
+    }
+}
+
+impl SseDecode for crate::api::geometry::Segment {
+    // Codec=Sse (Serialization based), see doc to use other codecs
+    fn sse_decode(deserializer: &mut flutter_rust_bridge::for_generated::SseDeserializer) -> Self {
+        let mut var_a = <crate::api::geometry::Pt>::sse_decode(deserializer);
+        let mut var_b = <crate::api::geometry::Pt>::sse_decode(deserializer);
+        return crate::api::geometry::Segment { a: var_a, b: var_b };
+    }
+}
+
+impl SseDecode for crate::api::segmentation::SegmentationResult {
+    // Codec=Sse (Serialization based), see doc to use other codecs
+    fn sse_decode(deserializer: &mut flutter_rust_bridge::for_generated::SseDeserializer) -> Self {
+        let mut var_polygonsByClass =
+            <Vec<crate::api::segmentation::ClassPolygons>>::sse_decode(deserializer);
+        let mut var_paths = <Vec<crate::api::geometry::Segment>>::sse_decode(deserializer);
+        return crate::api::segmentation::SegmentationResult {
+            polygons_by_class: var_polygonsByClass,
+            paths: var_paths,
+        };
+    }
+}
+
+impl SseDecode for crate::api::cost_grid::TerrainFraction {
+    // Codec=Sse (Serialization based), see doc to use other codecs
+    fn sse_decode(deserializer: &mut flutter_rust_bridge::for_generated::SseDeserializer) -> Self {
+        let mut var_className = <String>::sse_decode(deserializer);
+        let mut var_fraction = <f32>::sse_decode(deserializer);
+        return crate::api::cost_grid::TerrainFraction {
+            class_name: var_className,
+            fraction: var_fraction,
         };
     }
 }
@@ -217,8 +621,15 @@ fn pde_ffi_dispatcher_primary_impl(
 ) {
     // Codec=Pde (Serialization + dispatch), see doc to use other codecs
     match func_id {
-        2 => wire__crate__api__simple__init_app_impl(port, ptr, rust_vec_len, data_len),
-        3 => wire__crate__api__preprocessing__rectify_photo_impl(port, ptr, rust_vec_len, data_len),
+        1 => wire__crate__api__analyze__analyze_map_impl(port, ptr, rust_vec_len, data_len),
+        2 => wire__crate__api__course_detection__course_result_default_impl(
+            port,
+            ptr,
+            rust_vec_len,
+            data_len,
+        ),
+        4 => wire__crate__api__simple__init_app_impl(port, ptr, rust_vec_len, data_len),
+        5 => wire__crate__api__preprocessing__rectify_photo_impl(port, ptr, rust_vec_len, data_len),
         _ => unreachable!(),
     }
 }
@@ -231,13 +642,163 @@ fn pde_ffi_dispatcher_sync_impl(
 ) -> flutter_rust_bridge::for_generated::WireSyncRust2DartSse {
     // Codec=Pde (Serialization + dispatch), see doc to use other codecs
     match func_id {
-        1 => wire__crate__api__simple__greet_impl(ptr, rust_vec_len, data_len),
+        3 => wire__crate__api__simple__greet_impl(ptr, rust_vec_len, data_len),
         _ => unreachable!(),
     }
 }
 
 // Section: rust2dart
 
+// Codec=Dco (DartCObject based), see doc to use other codecs
+impl flutter_rust_bridge::IntoDart for crate::api::analyze::AnalyzeResult {
+    fn into_dart(self) -> flutter_rust_bridge::for_generated::DartAbi {
+        [
+            self.image_png.into_into_dart().into_dart(),
+            self.width.into_into_dart().into_dart(),
+            self.height.into_into_dart().into_dart(),
+            self.quad_found.into_into_dart().into_dart(),
+            self.mn_line_xs.into_into_dart().into_dart(),
+            self.mn_line_spacing_px.into_into_dart().into_dart(),
+            self.segmentation.into_into_dart().into_dart(),
+            self.course.into_into_dart().into_dart(),
+            self.route.into_into_dart().into_dart(),
+            self.route_terrain_breakdown.into_into_dart().into_dart(),
+            self.geojson.into_into_dart().into_dart(),
+        ]
+        .into_dart()
+    }
+}
+impl flutter_rust_bridge::for_generated::IntoDartExceptPrimitive
+    for crate::api::analyze::AnalyzeResult
+{
+}
+impl flutter_rust_bridge::IntoIntoDart<crate::api::analyze::AnalyzeResult>
+    for crate::api::analyze::AnalyzeResult
+{
+    fn into_into_dart(self) -> crate::api::analyze::AnalyzeResult {
+        self
+    }
+}
+// Codec=Dco (DartCObject based), see doc to use other codecs
+impl flutter_rust_bridge::IntoDart for crate::api::segmentation::ClassPolygons {
+    fn into_dart(self) -> flutter_rust_bridge::for_generated::DartAbi {
+        [
+            self.class_name.into_into_dart().into_dart(),
+            self.polygons.into_into_dart().into_dart(),
+        ]
+        .into_dart()
+    }
+}
+impl flutter_rust_bridge::for_generated::IntoDartExceptPrimitive
+    for crate::api::segmentation::ClassPolygons
+{
+}
+impl flutter_rust_bridge::IntoIntoDart<crate::api::segmentation::ClassPolygons>
+    for crate::api::segmentation::ClassPolygons
+{
+    fn into_into_dart(self) -> crate::api::segmentation::ClassPolygons {
+        self
+    }
+}
+// Codec=Dco (DartCObject based), see doc to use other codecs
+impl flutter_rust_bridge::IntoDart for crate::api::course_detection::Control {
+    fn into_dart(self) -> flutter_rust_bridge::for_generated::DartAbi {
+        [
+            self.x.into_into_dart().into_dart(),
+            self.y.into_into_dart().into_dart(),
+            self.radius.into_into_dart().into_dart(),
+            self.code.into_into_dart().into_dart(),
+        ]
+        .into_dart()
+    }
+}
+impl flutter_rust_bridge::for_generated::IntoDartExceptPrimitive
+    for crate::api::course_detection::Control
+{
+}
+impl flutter_rust_bridge::IntoIntoDart<crate::api::course_detection::Control>
+    for crate::api::course_detection::Control
+{
+    fn into_into_dart(self) -> crate::api::course_detection::Control {
+        self
+    }
+}
+// Codec=Dco (DartCObject based), see doc to use other codecs
+impl flutter_rust_bridge::IntoDart for crate::api::course_detection::CourseResult {
+    fn into_dart(self) -> flutter_rust_bridge::for_generated::DartAbi {
+        [
+            self.controls.into_into_dart().into_dart(),
+            self.start.into_into_dart().into_dart(),
+            self.finish.into_into_dart().into_dart(),
+            self.legs.into_into_dart().into_dart(),
+        ]
+        .into_dart()
+    }
+}
+impl flutter_rust_bridge::for_generated::IntoDartExceptPrimitive
+    for crate::api::course_detection::CourseResult
+{
+}
+impl flutter_rust_bridge::IntoIntoDart<crate::api::course_detection::CourseResult>
+    for crate::api::course_detection::CourseResult
+{
+    fn into_into_dart(self) -> crate::api::course_detection::CourseResult {
+        self
+    }
+}
+// Codec=Dco (DartCObject based), see doc to use other codecs
+impl flutter_rust_bridge::IntoDart for crate::api::segmentation::ExcludeBox {
+    fn into_dart(self) -> flutter_rust_bridge::for_generated::DartAbi {
+        [
+            self.x0.into_into_dart().into_dart(),
+            self.y0.into_into_dart().into_dart(),
+            self.x1.into_into_dart().into_dart(),
+            self.y1.into_into_dart().into_dart(),
+        ]
+        .into_dart()
+    }
+}
+impl flutter_rust_bridge::for_generated::IntoDartExceptPrimitive
+    for crate::api::segmentation::ExcludeBox
+{
+}
+impl flutter_rust_bridge::IntoIntoDart<crate::api::segmentation::ExcludeBox>
+    for crate::api::segmentation::ExcludeBox
+{
+    fn into_into_dart(self) -> crate::api::segmentation::ExcludeBox {
+        self
+    }
+}
+// Codec=Dco (DartCObject based), see doc to use other codecs
+impl flutter_rust_bridge::IntoDart for crate::api::geometry::Polygon {
+    fn into_dart(self) -> flutter_rust_bridge::for_generated::DartAbi {
+        [self.points.into_into_dart().into_dart()].into_dart()
+    }
+}
+impl flutter_rust_bridge::for_generated::IntoDartExceptPrimitive for crate::api::geometry::Polygon {}
+impl flutter_rust_bridge::IntoIntoDart<crate::api::geometry::Polygon>
+    for crate::api::geometry::Polygon
+{
+    fn into_into_dart(self) -> crate::api::geometry::Polygon {
+        self
+    }
+}
+// Codec=Dco (DartCObject based), see doc to use other codecs
+impl flutter_rust_bridge::IntoDart for crate::api::geometry::Pt {
+    fn into_dart(self) -> flutter_rust_bridge::for_generated::DartAbi {
+        [
+            self.x.into_into_dart().into_dart(),
+            self.y.into_into_dart().into_dart(),
+        ]
+        .into_dart()
+    }
+}
+impl flutter_rust_bridge::for_generated::IntoDartExceptPrimitive for crate::api::geometry::Pt {}
+impl flutter_rust_bridge::IntoIntoDart<crate::api::geometry::Pt> for crate::api::geometry::Pt {
+    fn into_into_dart(self) -> crate::api::geometry::Pt {
+        self
+    }
+}
 // Codec=Dco (DartCObject based), see doc to use other codecs
 impl flutter_rust_bridge::IntoDart for crate::api::preprocessing::RectifyResult {
     fn into_dart(self) -> flutter_rust_bridge::for_generated::DartAbi {
@@ -246,6 +807,9 @@ impl flutter_rust_bridge::IntoDart for crate::api::preprocessing::RectifyResult 
             self.quad_found.into_into_dart().into_dart(),
             self.width.into_into_dart().into_dart(),
             self.height.into_into_dart().into_dart(),
+            self.mn_line_xs.into_into_dart().into_dart(),
+            self.mn_line_spacing_px.into_into_dart().into_dart(),
+            self.scale_to_original.into_into_dart().into_dart(),
         ]
         .into_dart()
     }
@@ -261,11 +825,113 @@ impl flutter_rust_bridge::IntoIntoDart<crate::api::preprocessing::RectifyResult>
         self
     }
 }
+// Codec=Dco (DartCObject based), see doc to use other codecs
+impl flutter_rust_bridge::IntoDart for crate::api::pathfinding::RouteResult {
+    fn into_dart(self) -> flutter_rust_bridge::for_generated::DartAbi {
+        [
+            self.points.into_into_dart().into_dart(),
+            self.cost.into_into_dart().into_dart(),
+            self.recomputed_cost.into_into_dart().into_dart(),
+        ]
+        .into_dart()
+    }
+}
+impl flutter_rust_bridge::for_generated::IntoDartExceptPrimitive
+    for crate::api::pathfinding::RouteResult
+{
+}
+impl flutter_rust_bridge::IntoIntoDart<crate::api::pathfinding::RouteResult>
+    for crate::api::pathfinding::RouteResult
+{
+    fn into_into_dart(self) -> crate::api::pathfinding::RouteResult {
+        self
+    }
+}
+// Codec=Dco (DartCObject based), see doc to use other codecs
+impl flutter_rust_bridge::IntoDart for crate::api::geometry::Segment {
+    fn into_dart(self) -> flutter_rust_bridge::for_generated::DartAbi {
+        [
+            self.a.into_into_dart().into_dart(),
+            self.b.into_into_dart().into_dart(),
+        ]
+        .into_dart()
+    }
+}
+impl flutter_rust_bridge::for_generated::IntoDartExceptPrimitive for crate::api::geometry::Segment {}
+impl flutter_rust_bridge::IntoIntoDart<crate::api::geometry::Segment>
+    for crate::api::geometry::Segment
+{
+    fn into_into_dart(self) -> crate::api::geometry::Segment {
+        self
+    }
+}
+// Codec=Dco (DartCObject based), see doc to use other codecs
+impl flutter_rust_bridge::IntoDart for crate::api::segmentation::SegmentationResult {
+    fn into_dart(self) -> flutter_rust_bridge::for_generated::DartAbi {
+        [
+            self.polygons_by_class.into_into_dart().into_dart(),
+            self.paths.into_into_dart().into_dart(),
+        ]
+        .into_dart()
+    }
+}
+impl flutter_rust_bridge::for_generated::IntoDartExceptPrimitive
+    for crate::api::segmentation::SegmentationResult
+{
+}
+impl flutter_rust_bridge::IntoIntoDart<crate::api::segmentation::SegmentationResult>
+    for crate::api::segmentation::SegmentationResult
+{
+    fn into_into_dart(self) -> crate::api::segmentation::SegmentationResult {
+        self
+    }
+}
+// Codec=Dco (DartCObject based), see doc to use other codecs
+impl flutter_rust_bridge::IntoDart for crate::api::cost_grid::TerrainFraction {
+    fn into_dart(self) -> flutter_rust_bridge::for_generated::DartAbi {
+        [
+            self.class_name.into_into_dart().into_dart(),
+            self.fraction.into_into_dart().into_dart(),
+        ]
+        .into_dart()
+    }
+}
+impl flutter_rust_bridge::for_generated::IntoDartExceptPrimitive
+    for crate::api::cost_grid::TerrainFraction
+{
+}
+impl flutter_rust_bridge::IntoIntoDart<crate::api::cost_grid::TerrainFraction>
+    for crate::api::cost_grid::TerrainFraction
+{
+    fn into_into_dart(self) -> crate::api::cost_grid::TerrainFraction {
+        self
+    }
+}
 
 impl SseEncode for String {
     // Codec=Sse (Serialization based), see doc to use other codecs
     fn sse_encode(self, serializer: &mut flutter_rust_bridge::for_generated::SseSerializer) {
         <Vec<u8>>::sse_encode(self.into_bytes(), serializer);
+    }
+}
+
+impl SseEncode for crate::api::analyze::AnalyzeResult {
+    // Codec=Sse (Serialization based), see doc to use other codecs
+    fn sse_encode(self, serializer: &mut flutter_rust_bridge::for_generated::SseSerializer) {
+        <Vec<u8>>::sse_encode(self.image_png, serializer);
+        <i32>::sse_encode(self.width, serializer);
+        <i32>::sse_encode(self.height, serializer);
+        <bool>::sse_encode(self.quad_found, serializer);
+        <Vec<f32>>::sse_encode(self.mn_line_xs, serializer);
+        <Option<f32>>::sse_encode(self.mn_line_spacing_px, serializer);
+        <crate::api::segmentation::SegmentationResult>::sse_encode(self.segmentation, serializer);
+        <crate::api::course_detection::CourseResult>::sse_encode(self.course, serializer);
+        <Option<crate::api::pathfinding::RouteResult>>::sse_encode(self.route, serializer);
+        <Vec<crate::api::cost_grid::TerrainFraction>>::sse_encode(
+            self.route_terrain_breakdown,
+            serializer,
+        );
+        <String>::sse_encode(self.geojson, serializer);
     }
 }
 
@@ -276,10 +942,112 @@ impl SseEncode for bool {
     }
 }
 
+impl SseEncode for crate::api::segmentation::ClassPolygons {
+    // Codec=Sse (Serialization based), see doc to use other codecs
+    fn sse_encode(self, serializer: &mut flutter_rust_bridge::for_generated::SseSerializer) {
+        <String>::sse_encode(self.class_name, serializer);
+        <Vec<crate::api::geometry::Polygon>>::sse_encode(self.polygons, serializer);
+    }
+}
+
+impl SseEncode for crate::api::course_detection::Control {
+    // Codec=Sse (Serialization based), see doc to use other codecs
+    fn sse_encode(self, serializer: &mut flutter_rust_bridge::for_generated::SseSerializer) {
+        <f32>::sse_encode(self.x, serializer);
+        <f32>::sse_encode(self.y, serializer);
+        <f32>::sse_encode(self.radius, serializer);
+        <Option<String>>::sse_encode(self.code, serializer);
+    }
+}
+
+impl SseEncode for crate::api::course_detection::CourseResult {
+    // Codec=Sse (Serialization based), see doc to use other codecs
+    fn sse_encode(self, serializer: &mut flutter_rust_bridge::for_generated::SseSerializer) {
+        <Vec<crate::api::course_detection::Control>>::sse_encode(self.controls, serializer);
+        <Option<crate::api::geometry::Pt>>::sse_encode(self.start, serializer);
+        <Option<crate::api::geometry::Pt>>::sse_encode(self.finish, serializer);
+        <Vec<crate::api::geometry::Segment>>::sse_encode(self.legs, serializer);
+    }
+}
+
+impl SseEncode for crate::api::segmentation::ExcludeBox {
+    // Codec=Sse (Serialization based), see doc to use other codecs
+    fn sse_encode(self, serializer: &mut flutter_rust_bridge::for_generated::SseSerializer) {
+        <f32>::sse_encode(self.x0, serializer);
+        <f32>::sse_encode(self.y0, serializer);
+        <f32>::sse_encode(self.x1, serializer);
+        <f32>::sse_encode(self.y1, serializer);
+    }
+}
+
+impl SseEncode for f32 {
+    // Codec=Sse (Serialization based), see doc to use other codecs
+    fn sse_encode(self, serializer: &mut flutter_rust_bridge::for_generated::SseSerializer) {
+        serializer.cursor.write_f32::<NativeEndian>(self).unwrap();
+    }
+}
+
+impl SseEncode for f64 {
+    // Codec=Sse (Serialization based), see doc to use other codecs
+    fn sse_encode(self, serializer: &mut flutter_rust_bridge::for_generated::SseSerializer) {
+        serializer.cursor.write_f64::<NativeEndian>(self).unwrap();
+    }
+}
+
 impl SseEncode for i32 {
     // Codec=Sse (Serialization based), see doc to use other codecs
     fn sse_encode(self, serializer: &mut flutter_rust_bridge::for_generated::SseSerializer) {
         serializer.cursor.write_i32::<NativeEndian>(self).unwrap();
+    }
+}
+
+impl SseEncode for Vec<crate::api::segmentation::ClassPolygons> {
+    // Codec=Sse (Serialization based), see doc to use other codecs
+    fn sse_encode(self, serializer: &mut flutter_rust_bridge::for_generated::SseSerializer) {
+        <i32>::sse_encode(self.len() as _, serializer);
+        for item in self {
+            <crate::api::segmentation::ClassPolygons>::sse_encode(item, serializer);
+        }
+    }
+}
+
+impl SseEncode for Vec<crate::api::course_detection::Control> {
+    // Codec=Sse (Serialization based), see doc to use other codecs
+    fn sse_encode(self, serializer: &mut flutter_rust_bridge::for_generated::SseSerializer) {
+        <i32>::sse_encode(self.len() as _, serializer);
+        for item in self {
+            <crate::api::course_detection::Control>::sse_encode(item, serializer);
+        }
+    }
+}
+
+impl SseEncode for Vec<crate::api::segmentation::ExcludeBox> {
+    // Codec=Sse (Serialization based), see doc to use other codecs
+    fn sse_encode(self, serializer: &mut flutter_rust_bridge::for_generated::SseSerializer) {
+        <i32>::sse_encode(self.len() as _, serializer);
+        for item in self {
+            <crate::api::segmentation::ExcludeBox>::sse_encode(item, serializer);
+        }
+    }
+}
+
+impl SseEncode for Vec<crate::api::geometry::Polygon> {
+    // Codec=Sse (Serialization based), see doc to use other codecs
+    fn sse_encode(self, serializer: &mut flutter_rust_bridge::for_generated::SseSerializer) {
+        <i32>::sse_encode(self.len() as _, serializer);
+        for item in self {
+            <crate::api::geometry::Polygon>::sse_encode(item, serializer);
+        }
+    }
+}
+
+impl SseEncode for Vec<f32> {
+    // Codec=Sse (Serialization based), see doc to use other codecs
+    fn sse_encode(self, serializer: &mut flutter_rust_bridge::for_generated::SseSerializer) {
+        <i32>::sse_encode(self.len() as _, serializer);
+        for item in self {
+            <f32>::sse_encode(item, serializer);
+        }
     }
 }
 
@@ -293,6 +1061,91 @@ impl SseEncode for Vec<u8> {
     }
 }
 
+impl SseEncode for Vec<crate::api::geometry::Pt> {
+    // Codec=Sse (Serialization based), see doc to use other codecs
+    fn sse_encode(self, serializer: &mut flutter_rust_bridge::for_generated::SseSerializer) {
+        <i32>::sse_encode(self.len() as _, serializer);
+        for item in self {
+            <crate::api::geometry::Pt>::sse_encode(item, serializer);
+        }
+    }
+}
+
+impl SseEncode for Vec<crate::api::geometry::Segment> {
+    // Codec=Sse (Serialization based), see doc to use other codecs
+    fn sse_encode(self, serializer: &mut flutter_rust_bridge::for_generated::SseSerializer) {
+        <i32>::sse_encode(self.len() as _, serializer);
+        for item in self {
+            <crate::api::geometry::Segment>::sse_encode(item, serializer);
+        }
+    }
+}
+
+impl SseEncode for Vec<crate::api::cost_grid::TerrainFraction> {
+    // Codec=Sse (Serialization based), see doc to use other codecs
+    fn sse_encode(self, serializer: &mut flutter_rust_bridge::for_generated::SseSerializer) {
+        <i32>::sse_encode(self.len() as _, serializer);
+        for item in self {
+            <crate::api::cost_grid::TerrainFraction>::sse_encode(item, serializer);
+        }
+    }
+}
+
+impl SseEncode for Option<String> {
+    // Codec=Sse (Serialization based), see doc to use other codecs
+    fn sse_encode(self, serializer: &mut flutter_rust_bridge::for_generated::SseSerializer) {
+        <bool>::sse_encode(self.is_some(), serializer);
+        if let Some(value) = self {
+            <String>::sse_encode(value, serializer);
+        }
+    }
+}
+
+impl SseEncode for Option<f32> {
+    // Codec=Sse (Serialization based), see doc to use other codecs
+    fn sse_encode(self, serializer: &mut flutter_rust_bridge::for_generated::SseSerializer) {
+        <bool>::sse_encode(self.is_some(), serializer);
+        if let Some(value) = self {
+            <f32>::sse_encode(value, serializer);
+        }
+    }
+}
+
+impl SseEncode for Option<crate::api::geometry::Pt> {
+    // Codec=Sse (Serialization based), see doc to use other codecs
+    fn sse_encode(self, serializer: &mut flutter_rust_bridge::for_generated::SseSerializer) {
+        <bool>::sse_encode(self.is_some(), serializer);
+        if let Some(value) = self {
+            <crate::api::geometry::Pt>::sse_encode(value, serializer);
+        }
+    }
+}
+
+impl SseEncode for Option<crate::api::pathfinding::RouteResult> {
+    // Codec=Sse (Serialization based), see doc to use other codecs
+    fn sse_encode(self, serializer: &mut flutter_rust_bridge::for_generated::SseSerializer) {
+        <bool>::sse_encode(self.is_some(), serializer);
+        if let Some(value) = self {
+            <crate::api::pathfinding::RouteResult>::sse_encode(value, serializer);
+        }
+    }
+}
+
+impl SseEncode for crate::api::geometry::Polygon {
+    // Codec=Sse (Serialization based), see doc to use other codecs
+    fn sse_encode(self, serializer: &mut flutter_rust_bridge::for_generated::SseSerializer) {
+        <Vec<crate::api::geometry::Pt>>::sse_encode(self.points, serializer);
+    }
+}
+
+impl SseEncode for crate::api::geometry::Pt {
+    // Codec=Sse (Serialization based), see doc to use other codecs
+    fn sse_encode(self, serializer: &mut flutter_rust_bridge::for_generated::SseSerializer) {
+        <f32>::sse_encode(self.x, serializer);
+        <f32>::sse_encode(self.y, serializer);
+    }
+}
+
 impl SseEncode for crate::api::preprocessing::RectifyResult {
     // Codec=Sse (Serialization based), see doc to use other codecs
     fn sse_encode(self, serializer: &mut flutter_rust_bridge::for_generated::SseSerializer) {
@@ -300,6 +1153,45 @@ impl SseEncode for crate::api::preprocessing::RectifyResult {
         <bool>::sse_encode(self.quad_found, serializer);
         <i32>::sse_encode(self.width, serializer);
         <i32>::sse_encode(self.height, serializer);
+        <Vec<f32>>::sse_encode(self.mn_line_xs, serializer);
+        <Option<f32>>::sse_encode(self.mn_line_spacing_px, serializer);
+        <f32>::sse_encode(self.scale_to_original, serializer);
+    }
+}
+
+impl SseEncode for crate::api::pathfinding::RouteResult {
+    // Codec=Sse (Serialization based), see doc to use other codecs
+    fn sse_encode(self, serializer: &mut flutter_rust_bridge::for_generated::SseSerializer) {
+        <Vec<crate::api::geometry::Pt>>::sse_encode(self.points, serializer);
+        <f32>::sse_encode(self.cost, serializer);
+        <f32>::sse_encode(self.recomputed_cost, serializer);
+    }
+}
+
+impl SseEncode for crate::api::geometry::Segment {
+    // Codec=Sse (Serialization based), see doc to use other codecs
+    fn sse_encode(self, serializer: &mut flutter_rust_bridge::for_generated::SseSerializer) {
+        <crate::api::geometry::Pt>::sse_encode(self.a, serializer);
+        <crate::api::geometry::Pt>::sse_encode(self.b, serializer);
+    }
+}
+
+impl SseEncode for crate::api::segmentation::SegmentationResult {
+    // Codec=Sse (Serialization based), see doc to use other codecs
+    fn sse_encode(self, serializer: &mut flutter_rust_bridge::for_generated::SseSerializer) {
+        <Vec<crate::api::segmentation::ClassPolygons>>::sse_encode(
+            self.polygons_by_class,
+            serializer,
+        );
+        <Vec<crate::api::geometry::Segment>>::sse_encode(self.paths, serializer);
+    }
+}
+
+impl SseEncode for crate::api::cost_grid::TerrainFraction {
+    // Codec=Sse (Serialization based), see doc to use other codecs
+    fn sse_encode(self, serializer: &mut flutter_rust_bridge::for_generated::SseSerializer) {
+        <String>::sse_encode(self.class_name, serializer);
+        <f32>::sse_encode(self.fraction, serializer);
     }
 }
 

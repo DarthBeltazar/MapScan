@@ -1,2 +1,10 @@
+pub mod analyze;
+pub(crate) mod cost_grid;
+pub mod course_detection;
+pub mod geometry;
+pub(crate) mod mask_utils;
+pub(crate) mod pathfinding;
 pub mod preprocessing;
+pub mod segmentation;
 pub mod simple;
+pub(crate) mod vectorize;

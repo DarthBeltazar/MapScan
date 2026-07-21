@@ -39,13 +39,272 @@ The repo root now holds multiple sub-projects side by side:
   ### Rust CV pipeline (in progress) and the OpenCV toolchain
 
   `app/rust/src/api/preprocessing.rs` has the first reimplemented pipeline stage: `rectify_photo`
-  (decode -> downscale -> paper-quad detection -> perspective warp -> PNG-encode), a conceptual Rust port
-  of the Python prototype's `preprocessing.find_paper_quad`/`preprocessing.rectify` — not line-for-line,
-  scoped to perspective correction only for this first slice (no EXIF-safe load, white balance,
-  reading-orientation correction, or magnetic-north detection yet, unlike the Python version). Verified
-  directly against all 4 in-scope real photos via `app/rust/tests/rectify_photo.rs`
-  (`cargo test --test rectify_photo`) — paper quad found and rectified on all of them. Everything else in
-  `python_prototype/pipeline/` (terrain/course segmentation, cost-grid, pathfinding) is still unported.
+  (decode -> downscale -> paper-quad detection -> perspective warp -> percentile white-patch balance ->
+  best-effort magnetic-north-line detection -> PNG-encode), a conceptual Rust port of the Python
+  prototype's `preprocessing.find_paper_quad`/`preprocessing.rectify`/`preprocessing.white_balance`/
+  `preprocessing.detect_magnetic_north_lines` — not line-for-line. Reading-orientation correction is
+  deliberately still not reimplemented: the Python version's rotation fix is a hardcoded per-file table
+  (`config.PAGE_ROTATION_K`) that `PHASE0_HANDOFF.md` explicitly says not to carry into Phase 1 as-is (it
+  doesn't generalize to a photo this repo hasn't seen — that knob belongs in the manual-correction UI
+  instead, not a fixed table). Verified directly against all 4 in-scope real photos via
+  `app/rust/tests/rectify_photo.rs` (`cargo test --test rectify_photo`) — paper quad found and rectified on
+  all of them; white balance was additionally checked numerically (not just via the test's
+  dimension/PNG-validity assertions) by sampling the rectified map4.jpg's paper-margin pixels before/after
+  — the documented ~30pt-off-neutral cast on that file's blue channel collapses to within ~2 units across
+  channels after correction. Magnetic-north-line detection behaves the same as the Python version on these
+  4 files (checked directly, not just "it compiles"): map6.jpg finds 4 lines at a consistent ~176px
+  spacing, map0.jpg/map4.jpg only clear the >=3-lines-with-vertical-span bar for 2 candidates each (so
+  spacing comes back `None`, matching the Python version's documented "frequently finds nothing" behavior),
+  and map2.jpg finds 3 widely-spaced lines that are very likely a false-positive family rather than the
+  real grid — expected per the Python docstring's own caveat that this is best-effort and nothing
+  downstream depends on it succeeding, not something to chase further right now. `RectifyResult` grew
+  `mn_line_xs`/`mn_line_spacing_px` fields for this (regenerated via `flutter_rust_bridge_codegen generate`
+  from `app/`, surfaced in `main.dart`'s demo screen) — re-run that generate step and rebuild whenever a
+  `#[frb]`-visible struct's fields change, same as after this addition.
+
+  `app/rust/src/api/segmentation.rs` and `app/rust/src/api/course_detection.rs` port the Python prototype's
+  `segmentation.py`/`course_detection.py` (terrain polygons + path lines; course-ink controls/start/finish/
+  legs) — conceptual ports, not line-for-line, wired together with `preprocessing.rs` by
+  `app/rust/src/api/analyze.rs`'s `analyze_map` (the new frb-exposed entry point; `rectify_photo` still
+  exists standalone). Key differences from the Python version, deliberate not oversights:
+  - **No polygon-validity/geometry crate.** Python's `_mask_to_polygons` handles shapely returning
+    `GeometryCollection` from `make_valid` on self-touching pixel-contour rings (see that function's
+    docstring). The Rust port's `Polygon` is a plain simplified point ring (`approxPolyDP` in place of
+    shapely's `simplify`, same Douglas-Peucker algorithm underneath) with no validity concept to repair in
+    the first place — a deliberate simplification consistent with "draft quality, human cleans up
+    downstream" (see `segmentation.rs`'s module doc), not a gap to backfill reflexively. If a later stage
+    (the cost-grid rasterizer) needs true polygon validity, that's the point to add a real geometry crate.
+  - **OCR is not ported.** `course_detection.ocr_control_code` needs a separately-installed Tesseract
+    binary — bundling/requiring a native OCR engine on Android is a distinct infrastructure decision, not
+    something to pull in incidentally while porting shape detection. `Control.code` is always `null`.
+  - **Legend-exclude boxes and the HoughCircles `param2` threshold are caller-supplied parameters
+    (`ExcludeBox` list, `houghParam2: f64`), not a per-file table baked into the crate** — same
+    `PHASE0_HANDOFF.md` guidance as `PAGE_ROTATION_K` above: Python's `config.LEGEND_EXCLUDE_BOXES`/
+    `HOUGH_PARAM2` don't generalize to a photo this repo hasn't seen, so those knobs belong behind a future
+    manual-correction/sensitivity-tuning UI, not hardcoded. `app/rust/tests/analyze.rs` reuses the Python
+    prototype's already-calibrated per-file values for its 4 in-scope test photos *for that test only* (to
+    exercise the port against a known-good calibration) — `main.dart`'s demo screen deliberately does NOT
+    do this, calling `analyzeMap` with an empty exclude-box list and the Python prototype's
+    `HOUGH_PARAM2_DEFAULT` (38.0, itself documented there as an unverified guess) regardless of which photo
+    the user picks, since that's the honest uncalibrated result a real new photo gets today.
+  - **A naming-collision trap, worth remembering if this happens again**: flutter_rust_bridge indexes types
+    by short name across the whole `crate::api` tree it's told to scan (`rust_input: crate::api` in
+    `flutter_rust_bridge.yaml`), not by fully-qualified path — a private `Segment` struct inside
+    `preprocessing.rs` (magnetic-north-line segments) silently collided with the public, frb-exposed
+    `geometry::Segment` (course legs / path lines) until renamed to `MnSegment`; codegen only warned
+    ("multiple objects with same key ... randomly pick one") rather than erroring. Similarly,
+    `flutter_rust_bridge_codegen generate` does NOT respect `pub(crate)` as "don't bridge this" — it still
+    tried to surface the internal `Preprocessed` handoff struct (which carries a raw `opencv::core::Mat`)
+    as an opaque Dart class purely because it's reachable under `crate::api`, which then failed to compile
+    (`cannot find type Mat in this scope` in the generated glue) until marked
+    `#[flutter_rust_bridge::frb(ignore)]` explicitly. Relatedly, the individual algorithm-step functions in
+    `segmentation.rs`/`course_detection.rs` (`segment_terrain`, `detect_controls`, `detect_start_triangle`,
+    `detect_legs`, `detect_course`) must stay `pub(crate)`, not `pub` — making any of them fully `pub` makes
+    frb try to bridge that function too as a standalone Dart-callable entry point, which broke the same way
+    for `segment_terrain` (it takes a raw `&Mat` parameter, which isn't a supported bridged parameter type
+    here). Only `analyze_map`/`rectify_photo` and the plain-data struct types are meant to be `pub`.
+  - **Verified directly against all 4 in-scope real photos**, not just "it compiles" (`app/rust/tests/analyze.rs`,
+    `cargo test --test analyze`): control counts land within a wide tolerance of the Python prototype's
+    manually-counted baselines (map0.jpg 14 found/18 manual, map2.jpg 10/9, map4.jpg 10/17, map6.jpg 8/9),
+    segmented terrain area is a plausible (neither ~0 nor ~100%) fraction of the total image on every file,
+    and all 7 terrain classes always produce (possibly empty) polygon lists. Additionally spot-checked
+    visually (rendered a QA overlay PNG the same way the Python prototype's `visualize.py` does, via a
+    throwaway example binary, then deleted it): control-circle detections sit precisely on real printed
+    circles on map6.jpg. That same run's `detect_start_triangle` **did** report a triangle (Python's version
+    reliably reports `None` on every in-scope photo) — cropping the reported location confirmed it's the
+    purple out-of-bounds diagonal-hatch pattern crossing itself, i.e. exactly the same class of false
+    positive Python's own docstring documents at length (a line crossing a kink mistaken for a triangle),
+    not a porting bug — this detector is expected to be unreliable on these photos in *either* language, see
+    `course_detection.rs`'s `detect_start_triangle` doc comment and the Python original's docstring before
+    trying to "fix" it.
+  - **`out_of_bounds` detection quality on real photos, checked directly on map2.jpg**: real violet/purple
+    ISOM out-of-bounds cross-hatching genuinely exists on this file (confirmed by cropping the raw,
+    unrectified photo at 3 locations found by scanning for the same hue range `out_of_bounds_mask` uses) —
+    "not detected at all" was the initial impression from the demo app's overlay, but that's not quite
+    right. Cropping individual detected `out_of_bounds` polygons showed a mix: at least one (the largest,
+    ~1700px²) sits exactly on real hatching; at least two much smaller ones are false positives on printed
+    maroon control-code/control-description-grid *digits* ("0", "9") that happen to fall in the same
+    135-170 hue band `out_of_bounds_mask` casts. This is the same "real course ink and printed text are
+    statistically indistinguishable in HSV" problem `detect_start_triangle`'s docstring already documents
+    for course ink specifically — it hadn't been checked directly against `out_of_bounds` before. Separately,
+    even where the real hatching *is* found, it comes back as many small disconnected polygon fragments (a
+    diagonal cross-hatch pattern doesn't bridge into one blob under `_mask_to_polygons`'/`mask_to_polygons`'s
+    small 5x5 `MORPH_CLOSE` kernel), not one clean zone shape. Net effect: real signal exists in the output,
+    but is currently outnumbered by false positives and fragmentation badly enough that a user looking at
+    the raw overlay reasonably reads it as "not detected" — this is a real, now-confirmed weakness (likely
+    shared with the Python original, which has no test coverage of `out_of_bounds` specifically either), not
+    something to silently accept as fine.
+  - **Tightening `out_of_bounds_mask`'s hue/saturation range was tried next and measured worse, not fixed**
+    (see `segmentation.rs`'s `out_of_bounds_mask` doc comment for the full account) — don't re-attempt
+    without new evidence. Sampled-HSV percentiles showed real hatching and the false-positive digits have
+    nearly identical saturation distributions at every threshold checked (no separating gap), and this was
+    confirmed empirically, not just from the percentiles: raising the saturation floor from 40 to 70 (to
+    match `build_course_ink_mask`'s own threshold) verified end-to-end against all 4 in-scope photos
+    destroyed real signal *more* than false positives — map2.jpg's confirmed-real ~1727px² hatching polygon
+    shrank to a 121px² remnant, and map0.jpg's out-of-bounds detection (4 polygons) dropped to zero
+    entirely. Raising the hue floor from 135 to 150 was worse still: zero out-of-bounds polygons on
+    map0.jpg/map4.jpg/map6.jpg. Same "statistically indistinguishable in HSV" conclusion
+    `detect_start_triangle` already reached for course-ink-vs-triangle confusion, now independently confirmed
+    for this mask too. Reverted cleanly to the original 135-170/40-255/40-255 range.
+  - **Shape-based discrimination, tried next, worked** (`segmentation.rs`'s `out_of_bounds_polygons` — see
+    its doc comment for the full account): real ISOM cross-hatching, once closed into a blob by the same
+    `MORPH_CLOSE` step every class's polygon extraction uses, has *several* small enclosed holes (the
+    diamond gaps between hatch lines — checked directly, map2.jpg's two confirmed real zones had 5, 5, and
+    7 holes each), while isolated printed digits have 0-1 (a "0"'s single counter, or none for a "9"). A
+    `RETR_CCOMP` hole count (`MIN_HATCH_HOLES = 3`) replaces the plain area-only extraction for this class
+    only. Verified end-to-end against all 4 in-scope photos: map0.jpg correctly stays at 0 (no real hatching
+    on that file either); map2.jpg went from 29 polygons (mostly noise) to exactly 1, its confirmed-real
+    zone; map6.jpg went from 22 to 2, both cropped and confirmed real, zero false positives remaining.
+    map4.jpg initially went from 31 to 5, of which only 2 were real — the other 3 were a *different* false
+    positive (merged multi-character title/scale text like "H2,5m"/"7500", where adjacent glyphs bridge into
+    one blob and collectively accumulate enough holes), not the isolated-digit case this filter targets.
+    Covered by 3 new synthetic unit tests in `segmentation.rs` (`cargo test --lib`: a multi-hole lattice is
+    kept, a single-hole ring and a no-hole solid blob are both rejected) in addition to the real-photo
+    verification above.
+  - **The map4.jpg title-text residual led to a separate, now-fixed bug**: `tests/analyze.rs`'s calibrated
+    `legend_boxes` for map4.jpg/map6.jpg were copied from the Python prototype's
+    `config.LEGEND_EXCLUDE_BOXES`, calibrated against Python's *rotated* image (`PAGE_ROTATION_K` rotates
+    both files 270 degrees before that config was derived) — since this Rust pipeline deliberately doesn't
+    rotate (see `preprocessing.rs`), those boxes landed in the wrong place here. Confirmed directly by
+    rendering `rectify_photo`'s plain output with a fractional grid overlay for both files: in this
+    pipeline's actual (unrotated) frame the title block is top-right and the "75 ЛЕТ ФИЗТЕХ"/КВАРК/МФТИ logo
+    cluster is bottom-left for both files — roughly 180 degrees from where Python's boxes assume they are.
+    Re-derived both files' boxes directly against the Rust-rectified images (same visual-inspection method
+    the Python prototype's own calibration used) and updated `tests/analyze.rs`:
+    map4.jpg → `eb(0.49, 0.0, 0.97, 0.43)` (title) + `eb(0.0, 0.60, 0.30, 0.96)` (logos), map6.jpg →
+    `eb(0.49, 0.0, 0.78, 0.33)` + `eb(0.0, 0.68, 0.29, 0.97)`. Effect, verified via `cargo test --test
+    analyze`: map4.jpg's out_of_bounds false positives dropped from 3 to 0 (2 real polygons, 0 false, checked
+    directly by bounding-box comparison against the confirmed-real locations) — the previously-unexcluded
+    title text was exactly what those merged-digit holes were coming from. Control detection improved
+    substantially too, as a side effect of less title-text clutter feeding the Hough circle search:
+    map4.jpg 10/17 found→manual → 16/17, map6.jpg 8/9 → 9/9 (exact), and map6.jpg's previously-observed
+    spurious `detect_start_triangle` false positive (see above) no longer fires. This fix only touches the
+    test harness's calibration constants, not production code — `main.dart`'s demo path still deliberately
+    uses no legend boxes at all (see `PHASE0_HANDOFF.md`'s guidance against hardcoding per-file tables in
+    the shipped app).
+  - The demo app's layer-filter UI (isolate/hide a class, hide small polygons) remains useful for whatever
+    residual noise a given photo still has.
+
+  `app/rust/src/api/cost_grid.rs` and `app/rust/src/api/pathfinding.rs` port the Python prototype's
+  `cost_grid.py`/`pathfinding.py` (terrain/path rasterization into a per-pixel traversal-cost grid; a demo
+  least-cost route between two points), wired into `analyze_map`'s orchestration right after segmentation +
+  course detection, mirroring `run_pipeline.py`'s `_pick_demo_route_endpoints` logic (start -> nearest
+  control, else the first two detected controls, else no route) verbatim in
+  `analyze.rs::pick_demo_route_endpoints`. `AnalyzeResult` grew `route: Option<RouteResult>` and
+  `route_terrain_breakdown: Vec<TerrainFraction>` fields for this, drawn as a yellow line by `main.dart`'s
+  overlay painter. `TERRAIN_COST` (path/clearing/forest/rock/marsh/thicket/water/out_of_bounds ordering) is
+  hardcoded in `cost_grid.rs`, unlike `LEGEND_EXCLUDE_BOXES`/`HOUGH_PARAM2` — this is the one piece of the
+  Python prototype's `config.py` explicitly meant to generalize as a qualitative ISOM ordering, not
+  per-photo calibration (see `PHASE0_HANDOFF.md`), so hardcoding it here isn't the same mistake.
+  - **Pathfinding is a from-scratch Rust implementation, not a wrapped port.** The Python prototype uses
+    `skimage.graph.route_through_array` (`MCP_Geometric`) precisely because `prompt.txt` calls Python
+    routing logic prototype-only and names that function for Phase 0; `PHASE0_HANDOFF.md` explicitly says
+    Rust needs its own implementation. `pathfinding.rs` is an 8-connected Dijkstra (`BinaryHeap` + lazy
+    deletion) over the flat cost grid, using `MCP_Geometric`'s own documented per-step weighting verbatim
+    (a step of Euclidean length `d` costs `d * (cost[p1] + cost[p2]) / 2`) so that `RouteResult`'s
+    independent `recomputed_cost` resum (same self-consistency check the Python version does) actually
+    lines up with the Dijkstra-reported `cost`.
+  - **Verified on synthetic grids first** (13 `#[cfg(test)] mod tests` unit tests inside `cost_grid.rs`/
+    `pathfinding.rs`, `cargo test --lib`), each a direct Rust port of the corresponding case in
+    `python_prototype/tests/test_cost_grid.py`/`test_pathfinding.py` (draw-order/overlap winner, path drawn
+    cheap over area fill, valid-mask exclusion, route prefers a cheap corridor over an expensive wall,
+    direct route on a uniform grid, out-of-bounds endpoint clamping, hand-computed geometric-cost check) —
+    same reasoning as those Python tests: exact-match assertions are possible here because this is
+    deterministic rasterization/graph-search, not a CV heuristic that needs a real photo.
+  - **Then verified end-to-end against all 4 real in-scope photos** (`app/rust/tests/analyze.rs`, extended,
+    `cargo test --test analyze`): a demo route is found on every file (each one has either a start+control
+    or >=2 controls), stays within the image bounds, `cost`/`recomputed_cost` agree to within 1% on the real
+    (non-square, non-synthetic) grid, and terrain-breakdown fractions sum to 1. Route cost on the full
+    ~3000px-wide working-resolution grid added ~1.8s/photo to the test in an unoptimized debug build (23s
+    total for 4 photos, up from 16s pre-route) — not fast enough to worry about optimizing yet, but worth
+    knowing if a future photo count/resolution increase makes debug-build test time annoying; the shipped
+    app would run this in a release build regardless. The resulting routes are qualitatively sane, not just
+    "didn't crash": map0.jpg/map2.jpg/map4.jpg's routes are dominated by detected `path` terrain
+    (60-67% of route length) — the router correctly preferring the cheapest terrain class where a real path
+    was found — while map6.jpg's route (using the start->nearest-control branch, on that file's spurious
+    start-triangle detection, see above) is mostly `forest`/`default_gap`, consistent with not having a
+    detected path to follow between those two particular points.
+
+  `app/rust/src/api/vectorize.rs` ports the Python prototype's `vectorize.py` (segmentation + course +
+  route results -> a single GeoJSON-shaped document, the project's internal map format per `prompt.txt` --
+  see that Python module's docstring for why this is *not* real-world geo-referenced, and why `.omap`/`.ocd`
+  are a separate unbuilt input path this doesn't touch). `build_geojson` returns a plain `String` (not a
+  typed struct) — GeoJSON's per-feature `properties` are inherently heterogeneous (a control's `code`, a
+  route's `terrain_breakdown` map), which fits `serde_json::Value` naturally and a single frb struct
+  awkwardly, and a string is also what a caller actually wants (write straight to a `.geojson` file, same as
+  the Python prototype's `run_pipeline.py`, no separate parsing step needed on the Dart side). This is the
+  first `serde_json` usage in the crate — added as a plain dependency (`Cargo.toml`), no native/C toolchain
+  implications unlike `opencv`.
+  - `AnalyzeResult` grew a `geojson: String` field (built automatically inside `analyze_map`, alongside a
+    new `source_filename: Option<String>` parameter feeding the `properties.source_photo` field) and
+    `RectifyResult`/the internal `Preprocessed` type grew `scale_to_original: f32` (previously computed in
+    `preprocessing::downscale` but discarded — needed for `properties.scale_to_original_photo`, matching the
+    Python prototype's `PreprocessResult.scale_to_original`; multiply a working-resolution pixel coordinate
+    by `1.0 / scale_to_original` to recover its position in the original full-resolution photo).
+  - **Verified with 6 synthetic unit tests** (`cargo test --lib`, exact-match on deterministic
+    transforms/serialization, same reasoning as `cost_grid.rs`/`pathfinding.rs`'s tests — no real photo
+    needed to check a Y-flip or ring-closure): Y-flip matches hand-computed coordinates, a 3-point polygon
+    ring closes to 4 coordinates with first==last, an unread control's `code` serializes as JSON `null` (not
+    omitted or a placeholder string), a route's `terrain_breakdown` map round-trips correctly, and the
+    top-level `properties` block carries the right photo metadata.
+  - **Then verified against all 4 real in-scope photos** (`tests/analyze.rs`, extended): the produced string
+    parses as valid JSON, is a `FeatureCollection`, `properties.source_photo`/`image_width_px` match the
+    call's own inputs/outputs, and the feature count is at least the sum of polygons+paths+controls+legs
+    (a floor, not an exact count, since start/finish/route features are conditional). Additionally spot
+    rendered one photo's full GeoJSON and eyeballed representative features directly (a `course_leg`
+    `LineString`, the `demo_route` feature's `cost`/`recomputed_cost`/`terrain_breakdown`, and a `water`
+    `Polygon`'s ring) via a throwaway example binary, then deleted it — confirmed ring closure and
+    Y-flipped coordinates look right on real data, not just the synthetic tests.
+  - `main.dart`'s demo screen now passes the picked file's name through as `sourceFilename` and has a "Save
+    GeoJSON..." button (`FilePicker.platform.saveFile` + `dart:io`'s `File.writeAsString` — this app is
+    desktop-only so far, no web-safety concern from using `dart:io` here).
+
+  This completes the Phase 0 pipeline's full port (`preprocessing` -> `segmentation` + `course_detection` ->
+  `cost_grid` -> `pathfinding` -> `vectorize`) into Rust/`analyze_map`, matching `run_pipeline.py` end to
+  end except for OCR (see `course_detection.rs`'s module doc) and the manual-correction UI (unbuilt in
+  either codebase, explicitly Phase 1 scope per `PHASE0_HANDOFF.md`).
+
+  `app/lib/main.dart`'s demo screen (`AnalyzeScreen`) overlays segmentation/course/route results directly
+  on the rectified photo via a `CustomPainter`, and went through two rounds of fixes after being actually
+  used, not just built:
+  - **Overlay/image misalignment, checked directly**: `Image.memory` with explicit `width`/`height` but no
+    `fit` defaults to `BoxFit.scaleDown` (confirmed by reading `flutter/lib/src/painting/decoration_image.dart`
+    directly rather than guessing) — it gracefully downscales the displayed image to fit the window, but
+    `CustomPaint` does **not** rescale its own drawing commands to match a shrunk canvas. Painting overlay
+    points in raw full-resolution coordinates against a canvas that got shrunk to fit the window is what
+    caused the overlay to visibly drift away from the image. Fixed with a `LayoutBuilder` computing one
+    shared `scale = min(1, availableWidth / result.width)`, applied to both the displayed image size and,
+    inside the painter, via `canvas.scale(scale)` — and since `canvas.scale` also shrinks stroke widths
+    along with positions, every `Paint`'s `strokeWidth` is expressed as `desiredScreenPx / scale` so lines
+    stay a constant on-screen thickness regardless of window size or source photo resolution.
+  - **Detection noise on a real, uncalibrated photo is genuinely bad, checked directly on map0.jpg**: with
+    the demo's deliberately-uncalibrated `analyzeMap` call (empty `legendBoxes`, default `houghParam2`),
+    path detection produces ~1170-1419 segments scattered across the whole photo (not tracing real trails —
+    it's picking up contour lines and vegetation-symbol edges, same root cause as `_path_lines`'s own
+    "draft quality" framing in `segmentation.rs`), and `rock` over-triggers on real dense vegetation/contour
+    texture (500-800+ polygons on one photo). Legend-box calibration measurably reduces this (`rock` 821→513
+    polygons, `paths` 1419→1170 on map0.jpg with vs. without the Python prototype's known-good boxes for
+    that file) but doesn't fix the bulk of it — most of the noise is inherent heuristic over-sensitivity on
+    real terrain, not missing calibration, and was verified by direct before/after comparison via a
+    throwaway debug binary (rendered both versions, compared polygon counts and visually), not assumed.
+    This is consistent with the Python prototype's own "draft quality... human cleans up in the
+    manual-correction UI" framing (see Project Context above) — the manual-correction UI doesn't exist yet,
+    so this rough-looking overlay is an honest current-state snapshot, not a regression introduced by the
+    Rust port or the Flutter demo screen.
+  - **Interim mitigation added to the demo screen** (not touching the CV pipeline, deliberately, absent new
+    evidence for a specific threshold fix — see the `out_of_bounds` finding above for why): a `_LayerFilterBar`
+    with a `FilterChip` per layer (terrain classes + paths/legs/controls/route, each labeled with its live
+    detected count, e.g. `out_of_bounds (0)` — so an empty class is now visibly explicit rather than silently
+    invisible) to show/hide layers, plus a min-polygon-area slider to hide small noise blobs. Polygons are
+    now filled with a translucent color (not just a thin outline, which was easy to miss against a busy
+    printed map) and `paths` moved from black (blended into these maps' own printed black path ink) to cyan.
+  - **A `shouldRepaint` gotcha hit while adding the filter chips**: `_hiddenLayers` was originally a `final
+    Set<String>` mutated in place (`.add`/`.remove`) on toggle. `CustomPainter.shouldRepaint` compares the
+    *old* painter instance's field against the *new* one; since both referenced the same mutated-in-place
+    `Set` object, the comparison never detected a change and toggling a chip silently failed to repaint.
+    Fixed by replacing the field with a fresh `Set` (`_hiddenLayers.toSet()..add/remove(key)`) on every
+    toggle instead of mutating in place — worth remembering for any other mutable-collection state driving
+    a `CustomPainter` in this codebase.
 
   Uses the `opencv` crate (Rust bindings, `twistedfall/opencv-rust`) via FFI to a real OpenCV install —
   this is genuinely new infrastructure, not something `flutter_rust_bridge_codegen create` set up. Needed

@@ -6,8 +6,9 @@
 import '../frb_generated.dart';
 import 'package:flutter_rust_bridge/flutter_rust_bridge_for_generated.dart';
 
-// These functions are ignored because they are not marked as `pub`: `downscale`, `find_paper_quad`, `order_corners`, `point_dist`, `rectify_photo_impl`, `rectify`
-// These function are ignored because they are on traits that is not defined in current crate (put an empty `#[frb]` on it to unignore): `clone`, `fmt`
+// These functions are ignored because they are not marked as `pub`: `all_segments`, `detect_magnetic_north_lines`, `downscale`, `drop_border_segments`, `find_paper_quad`, `median`, `order_corners`, `point_dist`, `preprocess`, `rectify_photo_impl`, `rectify`, `white_balance`
+// These types are ignored because they are neither used by any `pub` functions nor (for structs and enums) marked `#[frb(unignore)]`: `MnSegment`, `Preprocessed`
+// These function are ignored because they are on traits that is not defined in current crate (put an empty `#[frb]` on it to unignore): `clone`, `clone`, `fmt`, `fmt`
 
 Future<RectifyResult> rectifyPhoto({required List<int> imageBytes}) => RustLib
     .instance
@@ -24,16 +25,38 @@ class RectifyResult {
   final int width;
   final int height;
 
+  /// X positions (px, in the output image's coordinates) of detected
+  /// magnetic-north lines. Best-effort -- frequently empty, see
+  /// `detect_magnetic_north_lines`.
+  final Float32List mnLineXs;
+
+  /// Median spacing (px) between `mn_line_xs`, if at least 2 were found.
+  final double? mnLineSpacingPx;
+
+  /// `working_resolution_size / original_photo_size` (<=1.0) -- multiply a
+  /// working-resolution pixel coordinate by `1.0 / scale_to_original` to
+  /// recover its position in the original, full-resolution photo.
+  final double scaleToOriginal;
+
   const RectifyResult({
     required this.imagePng,
     required this.quadFound,
     required this.width,
     required this.height,
+    required this.mnLineXs,
+    this.mnLineSpacingPx,
+    required this.scaleToOriginal,
   });
 
   @override
   int get hashCode =>
-      imagePng.hashCode ^ quadFound.hashCode ^ width.hashCode ^ height.hashCode;
+      imagePng.hashCode ^
+      quadFound.hashCode ^
+      width.hashCode ^
+      height.hashCode ^
+      mnLineXs.hashCode ^
+      mnLineSpacingPx.hashCode ^
+      scaleToOriginal.hashCode;
 
   @override
   bool operator ==(Object other) =>
@@ -43,5 +66,8 @@ class RectifyResult {
           imagePng == other.imagePng &&
           quadFound == other.quadFound &&
           width == other.width &&
-          height == other.height;
+          height == other.height &&
+          mnLineXs == other.mnLineXs &&
+          mnLineSpacingPx == other.mnLineSpacingPx &&
+          scaleToOriginal == other.scaleToOriginal;
 }

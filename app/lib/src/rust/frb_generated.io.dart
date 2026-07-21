@@ -3,7 +3,13 @@
 
 // ignore_for_file: unused_import, unused_element, unnecessary_import, duplicate_ignore, invalid_use_of_internal_member, annotate_overrides, non_constant_identifier_names, curly_braces_in_flow_control_structures, prefer_const_literals_to_create_immutables, unused_field
 
+import 'api/analyze.dart';
+import 'api/cost_grid.dart';
+import 'api/course_detection.dart';
+import 'api/geometry.dart';
+import 'api/pathfinding.dart';
 import 'api/preprocessing.dart';
+import 'api/segmentation.dart';
 import 'api/simple.dart';
 import 'dart:async';
 import 'dart:convert';
@@ -23,10 +29,55 @@ abstract class RustLibApiImplPlatform extends BaseApiImpl<RustLibWire> {
   String dco_decode_String(dynamic raw);
 
   @protected
+  AnalyzeResult dco_decode_analyze_result(dynamic raw);
+
+  @protected
   bool dco_decode_bool(dynamic raw);
 
   @protected
+  double dco_decode_box_autoadd_f_32(dynamic raw);
+
+  @protected
+  Pt dco_decode_box_autoadd_pt(dynamic raw);
+
+  @protected
+  RouteResult dco_decode_box_autoadd_route_result(dynamic raw);
+
+  @protected
+  ClassPolygons dco_decode_class_polygons(dynamic raw);
+
+  @protected
+  Control dco_decode_control(dynamic raw);
+
+  @protected
+  CourseResult dco_decode_course_result(dynamic raw);
+
+  @protected
+  ExcludeBox dco_decode_exclude_box(dynamic raw);
+
+  @protected
+  double dco_decode_f_32(dynamic raw);
+
+  @protected
+  double dco_decode_f_64(dynamic raw);
+
+  @protected
   int dco_decode_i_32(dynamic raw);
+
+  @protected
+  List<ClassPolygons> dco_decode_list_class_polygons(dynamic raw);
+
+  @protected
+  List<Control> dco_decode_list_control(dynamic raw);
+
+  @protected
+  List<ExcludeBox> dco_decode_list_exclude_box(dynamic raw);
+
+  @protected
+  List<Polygon> dco_decode_list_polygon(dynamic raw);
+
+  @protected
+  Float32List dco_decode_list_prim_f_32_strict(dynamic raw);
 
   @protected
   List<int> dco_decode_list_prim_u_8_loose(dynamic raw);
@@ -35,7 +86,46 @@ abstract class RustLibApiImplPlatform extends BaseApiImpl<RustLibWire> {
   Uint8List dco_decode_list_prim_u_8_strict(dynamic raw);
 
   @protected
+  List<Pt> dco_decode_list_pt(dynamic raw);
+
+  @protected
+  List<Segment> dco_decode_list_segment(dynamic raw);
+
+  @protected
+  List<TerrainFraction> dco_decode_list_terrain_fraction(dynamic raw);
+
+  @protected
+  String? dco_decode_opt_String(dynamic raw);
+
+  @protected
+  double? dco_decode_opt_box_autoadd_f_32(dynamic raw);
+
+  @protected
+  Pt? dco_decode_opt_box_autoadd_pt(dynamic raw);
+
+  @protected
+  RouteResult? dco_decode_opt_box_autoadd_route_result(dynamic raw);
+
+  @protected
+  Polygon dco_decode_polygon(dynamic raw);
+
+  @protected
+  Pt dco_decode_pt(dynamic raw);
+
+  @protected
   RectifyResult dco_decode_rectify_result(dynamic raw);
+
+  @protected
+  RouteResult dco_decode_route_result(dynamic raw);
+
+  @protected
+  Segment dco_decode_segment(dynamic raw);
+
+  @protected
+  SegmentationResult dco_decode_segmentation_result(dynamic raw);
+
+  @protected
+  TerrainFraction dco_decode_terrain_fraction(dynamic raw);
 
   @protected
   int dco_decode_u_8(dynamic raw);
@@ -47,10 +137,57 @@ abstract class RustLibApiImplPlatform extends BaseApiImpl<RustLibWire> {
   String sse_decode_String(SseDeserializer deserializer);
 
   @protected
+  AnalyzeResult sse_decode_analyze_result(SseDeserializer deserializer);
+
+  @protected
   bool sse_decode_bool(SseDeserializer deserializer);
 
   @protected
+  double sse_decode_box_autoadd_f_32(SseDeserializer deserializer);
+
+  @protected
+  Pt sse_decode_box_autoadd_pt(SseDeserializer deserializer);
+
+  @protected
+  RouteResult sse_decode_box_autoadd_route_result(SseDeserializer deserializer);
+
+  @protected
+  ClassPolygons sse_decode_class_polygons(SseDeserializer deserializer);
+
+  @protected
+  Control sse_decode_control(SseDeserializer deserializer);
+
+  @protected
+  CourseResult sse_decode_course_result(SseDeserializer deserializer);
+
+  @protected
+  ExcludeBox sse_decode_exclude_box(SseDeserializer deserializer);
+
+  @protected
+  double sse_decode_f_32(SseDeserializer deserializer);
+
+  @protected
+  double sse_decode_f_64(SseDeserializer deserializer);
+
+  @protected
   int sse_decode_i_32(SseDeserializer deserializer);
+
+  @protected
+  List<ClassPolygons> sse_decode_list_class_polygons(
+    SseDeserializer deserializer,
+  );
+
+  @protected
+  List<Control> sse_decode_list_control(SseDeserializer deserializer);
+
+  @protected
+  List<ExcludeBox> sse_decode_list_exclude_box(SseDeserializer deserializer);
+
+  @protected
+  List<Polygon> sse_decode_list_polygon(SseDeserializer deserializer);
+
+  @protected
+  Float32List sse_decode_list_prim_f_32_strict(SseDeserializer deserializer);
 
   @protected
   List<int> sse_decode_list_prim_u_8_loose(SseDeserializer deserializer);
@@ -59,7 +196,52 @@ abstract class RustLibApiImplPlatform extends BaseApiImpl<RustLibWire> {
   Uint8List sse_decode_list_prim_u_8_strict(SseDeserializer deserializer);
 
   @protected
+  List<Pt> sse_decode_list_pt(SseDeserializer deserializer);
+
+  @protected
+  List<Segment> sse_decode_list_segment(SseDeserializer deserializer);
+
+  @protected
+  List<TerrainFraction> sse_decode_list_terrain_fraction(
+    SseDeserializer deserializer,
+  );
+
+  @protected
+  String? sse_decode_opt_String(SseDeserializer deserializer);
+
+  @protected
+  double? sse_decode_opt_box_autoadd_f_32(SseDeserializer deserializer);
+
+  @protected
+  Pt? sse_decode_opt_box_autoadd_pt(SseDeserializer deserializer);
+
+  @protected
+  RouteResult? sse_decode_opt_box_autoadd_route_result(
+    SseDeserializer deserializer,
+  );
+
+  @protected
+  Polygon sse_decode_polygon(SseDeserializer deserializer);
+
+  @protected
+  Pt sse_decode_pt(SseDeserializer deserializer);
+
+  @protected
   RectifyResult sse_decode_rectify_result(SseDeserializer deserializer);
+
+  @protected
+  RouteResult sse_decode_route_result(SseDeserializer deserializer);
+
+  @protected
+  Segment sse_decode_segment(SseDeserializer deserializer);
+
+  @protected
+  SegmentationResult sse_decode_segmentation_result(
+    SseDeserializer deserializer,
+  );
+
+  @protected
+  TerrainFraction sse_decode_terrain_fraction(SseDeserializer deserializer);
 
   @protected
   int sse_decode_u_8(SseDeserializer deserializer);
@@ -71,10 +253,67 @@ abstract class RustLibApiImplPlatform extends BaseApiImpl<RustLibWire> {
   void sse_encode_String(String self, SseSerializer serializer);
 
   @protected
+  void sse_encode_analyze_result(AnalyzeResult self, SseSerializer serializer);
+
+  @protected
   void sse_encode_bool(bool self, SseSerializer serializer);
 
   @protected
+  void sse_encode_box_autoadd_f_32(double self, SseSerializer serializer);
+
+  @protected
+  void sse_encode_box_autoadd_pt(Pt self, SseSerializer serializer);
+
+  @protected
+  void sse_encode_box_autoadd_route_result(
+    RouteResult self,
+    SseSerializer serializer,
+  );
+
+  @protected
+  void sse_encode_class_polygons(ClassPolygons self, SseSerializer serializer);
+
+  @protected
+  void sse_encode_control(Control self, SseSerializer serializer);
+
+  @protected
+  void sse_encode_course_result(CourseResult self, SseSerializer serializer);
+
+  @protected
+  void sse_encode_exclude_box(ExcludeBox self, SseSerializer serializer);
+
+  @protected
+  void sse_encode_f_32(double self, SseSerializer serializer);
+
+  @protected
+  void sse_encode_f_64(double self, SseSerializer serializer);
+
+  @protected
   void sse_encode_i_32(int self, SseSerializer serializer);
+
+  @protected
+  void sse_encode_list_class_polygons(
+    List<ClassPolygons> self,
+    SseSerializer serializer,
+  );
+
+  @protected
+  void sse_encode_list_control(List<Control> self, SseSerializer serializer);
+
+  @protected
+  void sse_encode_list_exclude_box(
+    List<ExcludeBox> self,
+    SseSerializer serializer,
+  );
+
+  @protected
+  void sse_encode_list_polygon(List<Polygon> self, SseSerializer serializer);
+
+  @protected
+  void sse_encode_list_prim_f_32_strict(
+    Float32List self,
+    SseSerializer serializer,
+  );
 
   @protected
   void sse_encode_list_prim_u_8_loose(List<int> self, SseSerializer serializer);
@@ -86,7 +325,58 @@ abstract class RustLibApiImplPlatform extends BaseApiImpl<RustLibWire> {
   );
 
   @protected
+  void sse_encode_list_pt(List<Pt> self, SseSerializer serializer);
+
+  @protected
+  void sse_encode_list_segment(List<Segment> self, SseSerializer serializer);
+
+  @protected
+  void sse_encode_list_terrain_fraction(
+    List<TerrainFraction> self,
+    SseSerializer serializer,
+  );
+
+  @protected
+  void sse_encode_opt_String(String? self, SseSerializer serializer);
+
+  @protected
+  void sse_encode_opt_box_autoadd_f_32(double? self, SseSerializer serializer);
+
+  @protected
+  void sse_encode_opt_box_autoadd_pt(Pt? self, SseSerializer serializer);
+
+  @protected
+  void sse_encode_opt_box_autoadd_route_result(
+    RouteResult? self,
+    SseSerializer serializer,
+  );
+
+  @protected
+  void sse_encode_polygon(Polygon self, SseSerializer serializer);
+
+  @protected
+  void sse_encode_pt(Pt self, SseSerializer serializer);
+
+  @protected
   void sse_encode_rectify_result(RectifyResult self, SseSerializer serializer);
+
+  @protected
+  void sse_encode_route_result(RouteResult self, SseSerializer serializer);
+
+  @protected
+  void sse_encode_segment(Segment self, SseSerializer serializer);
+
+  @protected
+  void sse_encode_segmentation_result(
+    SegmentationResult self,
+    SseSerializer serializer,
+  );
+
+  @protected
+  void sse_encode_terrain_fraction(
+    TerrainFraction self,
+    SseSerializer serializer,
+  );
 
   @protected
   void sse_encode_u_8(int self, SseSerializer serializer);
