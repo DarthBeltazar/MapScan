@@ -8,6 +8,9 @@ This repo is **Phase 0** of a larger, long-lived project: a cross-platform mobil
 that lets a runner photograph a paper orienteering map and get an offline route between controls. The
 full project spec (roles, architecture, fixed tech stack, phase plan) lives in `prompt.txt` (Russian) —
 read it before doing any non-trivial work here, since it defines constraints this repo must not violate.
+Phase 0 is complete; `PHASE0_HANDOFF.md` is the condensed manifest of what to carry forward into Phase 1
+(Flutter/Rust), what calibration is photo-specific and non-portable, and what already failed there so it
+isn't re-attempted blind — read it before starting Phase 1 work.
 
 Key facts from `prompt.txt` that matter when working in *this* repo:
 
