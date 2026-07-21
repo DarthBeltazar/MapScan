@@ -102,7 +102,7 @@ alternative actually used. Full accounts are in the relevant docstrings.
 
 ## Calibration data: hand-tuned, not portable as literal numbers
 
-Every constant in `pipeline/config.py` below the terrain-class enum is
+Every constant in `python_prototype/pipeline/config.py` below the terrain-class enum is
 per-photo, hand-calibrated by looking at that specific file's rendered QA
 output — `PAGE_ROTATION_K`, `LEGEND_EXCLUDE_BOXES`, `HOUGH_PARAM2`,
 `RING_COVERAGE_MIN_FRACTION`, `START_TRIANGLE_AREA_RATIO_RANGE`. None of it
@@ -122,7 +122,7 @@ convention until real data shows up.
 
 ## Test-data scope reminder
 
-`testData/` has 9 real photos across 3 map genres; only `map0/2/4/6.jpg`
+`python_prototype/testData/` has 9 real photos across 3 map genres; only `map0/2/4/6.jpg`
 (classic forest ISOM) are in scope for the taxonomy this pipeline (and
 `TERRAIN_CLASSES`) was built around. `map1.jpg` (alpine), `map3/5.jpg`
 (ISSprOM sprint, buildings-dominated), `map7/8.jpg` (1:15000-17500 rogaine

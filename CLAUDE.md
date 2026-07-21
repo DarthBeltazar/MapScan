@@ -4,20 +4,46 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 
 ## Project context
 
-This repo is **Phase 0** of a larger, long-lived project: a cross-platform mobile app for orienteering
-that lets a runner photograph a paper orienteering map and get an offline route between controls. The
-full project spec (roles, architecture, fixed tech stack, phase plan) lives in `prompt.txt` (Russian) —
-read it before doing any non-trivial work here, since it defines constraints this repo must not violate.
-Phase 0 is complete; `PHASE0_HANDOFF.md` is the condensed manifest of what to carry forward into Phase 1
-(Flutter/Rust), what calibration is photo-specific and non-portable, and what already failed there so it
-isn't re-attempted blind — read it before starting Phase 1 work.
+This repo covers a larger, long-lived project: a cross-platform mobile app for orienteering that lets a
+runner photograph a paper orienteering map and get an offline route between controls. The full project
+spec (roles, architecture, fixed tech stack, phase plan) lives in `prompt.txt` (Russian) — read it before
+doing any non-trivial work here, since it defines constraints this repo must not violate.
 
-Key facts from `prompt.txt` that matter when working in *this* repo:
+The repo root now holds multiple sub-projects side by side:
 
-- **This repo is the Python CV/path-finding prototype only** (`prompt.txt` phase 0: "prove segmentation →
-  cost-grid → path works"). Production mobile code is Flutter (Dart) + Rust (via `flutter_rust_bridge`);
-  Python here is prototyping only, not something that gets ported/shipped as-is. Don't blur the two worlds
-  without an explicit reason.
+- **`python_prototype/`** — the Phase 0 Python CV/path-finding prototype, complete and frozen. Everything
+  below this point in the doc describes that subtree. `PHASE0_HANDOFF.md` (repo root) is the condensed
+  manifest of what to carry forward into Phase 1 (Flutter/Rust), what calibration is photo-specific and
+  non-portable, and what already failed there so it isn't re-attempted blind — read it before starting
+  Phase 1 work.
+- **`app/`** — Phase 1: Flutter client + Rust core crate (`app/rust/`), wired together via
+  `flutter_rust_bridge` (scaffolded with `flutter_rust_bridge_codegen create`, not a port of
+  `python_prototype/`). Currently just the generated skeleton — a `greet()` sanity call from Dart into
+  Rust (`app/rust/src/api/simple.rs`, called from `app/lib/main.dart`) — nothing from the Python pipeline
+  has been reimplemented yet. Toolchain on this machine: Flutter SDK at `C:\flutter` (stable channel, not
+  inside the repo), Rust via rustup, Android SDK/NDK at `%LOCALAPPDATA%\Android\Sdk`, `flutter_rust_bridge_codegen`
+  via `cargo install`. `flutter doctor` is clean; both `flutter build windows` and `flutter build apk --debug`
+  are verified working from this checkout.
+  - **Known gotcha, checked directly**: this Flutter version's template ships Gradle 9.1.0/AGP 9.0.1, but
+    `flutter_rust_bridge` 2.12.0's vendored `cargokit` Gradle plugin
+    (`app/rust_builder/cargokit/gradle/plugin.gradle`) still calls the now-removed `Project.exec()` API,
+    which fails Android builds with `Could not find method exec() ... on project of type
+    org.gradle.api.Project`. Fixed locally by injecting `ExecOperations` into the task
+    (`@Inject abstract ExecOperations getExecOperations()`) instead of calling `project.exec {}` — the
+    Gradle-recommended replacement, not a version downgrade. Also had to bump
+    `app/rust_builder/android/build.gradle`'s `compileSdkVersion` from the plugin's default of 33 to 36 to
+    match `android/app/build.gradle.kts`'s `flutter.compileSdkVersion`, since its transitive `androidx`
+    deps require compileSdk ≥34. **Both edits are hand-patches to files `flutter_rust_bridge_codegen`
+    generates/vendors** — if the project is ever regenerated or `rust_builder/cargokit` is refreshed from a
+    newer frb release, re-check whether upstream has fixed Gradle 9 compatibility before reapplying (crates.io
+    still listed 2.12.0 as the newest *stable* release when this was hit; a 2.13.0 beta existed but wasn't used).
+
+Key facts from `prompt.txt` that matter when working in `python_prototype/`:
+
+- **`python_prototype/` is the Python CV/path-finding prototype only** (`prompt.txt` phase 0: "prove
+  segmentation → cost-grid → path works"). Production mobile code is Flutter (Dart) + Rust (via
+  `flutter_rust_bridge`); Python here is prototyping only, not something that gets ported/shipped as-is.
+  Don't blur the two worlds without an explicit reason.
 - The **fixed stack** for the eventual product (Flutter/Rust/OpenCV-FFI/TFLite/ML Kit/SQLite) is decided —
   don't propose alternatives unless explicitly asked, and don't design this Python code as if it were the
   production implementation.
@@ -44,7 +70,7 @@ Key facts from `prompt.txt` that matter when working in *this* repo:
 
 ## Scope: which test photos are "in scope"
 
-`testData/` has 9 real photographed orienteering maps, but they're **three different map genres** and only
+`python_prototype/testData/` has 9 real photographed orienteering maps, but they're **three different map genres** and only
 one genre is targeted by the current pipeline:
 
 - **In scope** (`pipeline.config.IN_SCOPE_FILES`): `map0.jpg`, `map2.jpg`, `map4.jpg`, `map6.jpg` — classic
@@ -62,8 +88,10 @@ one genre is targeted by the current pipeline:
 
 ## Commands
 
-Environment: Python 3.14, venv at `.venv/` (already created). No `requirements.txt` yet — the dependency
-set actually installed is:
+All commands below are run from the **repo root**, not from inside `python_prototype/`.
+
+Environment: Python 3.14, venv at `python_prototype/.venv/` (already created). No `requirements.txt` yet —
+the dependency set actually installed is:
 
 ```
 opencv-python-headless numpy shapely scikit-image pytesseract matplotlib pytest Pillow
@@ -72,14 +100,14 @@ opencv-python-headless numpy shapely scikit-image pytesseract matplotlib pytest 
 Windows (PowerShell/Git Bash), always use the venv's own interpreter rather than relying on activation:
 
 ```
-.venv/Scripts/python.exe -m pip install opencv-python-headless numpy shapely scikit-image pytesseract matplotlib pytest Pillow
+python_prototype/.venv/Scripts/python.exe -m pip install opencv-python-headless numpy shapely scikit-image pytesseract matplotlib pytest Pillow
 ```
 
-Run the pipeline on one photo (writes `output/<name>.geojson` + `output/<name>_qa.png`):
+Run the pipeline on one photo (writes `python_prototype/output/<name>.geojson` + `python_prototype/output/<name>_qa.png`):
 
 ```
-.venv/Scripts/python.exe scripts/run_pipeline.py testData/map0.jpg
-.venv/Scripts/python.exe scripts/run_pipeline.py testData/map0.jpg --no-ocr --out-dir output
+python_prototype/.venv/Scripts/python.exe python_prototype/scripts/run_pipeline.py python_prototype/testData/map0.jpg
+python_prototype/.venv/Scripts/python.exe python_prototype/scripts/run_pipeline.py python_prototype/testData/map0.jpg --no-ocr --out-dir python_prototype/output
 ```
 
 `--no-ocr` skips control-code OCR — useful to save the ~0.3s/control OCR cost when iterating on something
@@ -117,15 +145,16 @@ next time.
 Run the whole test suite / a single test:
 
 ```
-.venv/Scripts/python.exe -m pytest tests/ -q
-.venv/Scripts/python.exe -m pytest tests/test_geometry.py::test_dedupe_finish_merges_close_concentric_pair -q
+python_prototype/.venv/Scripts/python.exe -m pytest python_prototype/tests/ -q
+python_prototype/.venv/Scripts/python.exe -m pytest python_prototype/tests/test_geometry.py::test_dedupe_finish_merges_close_concentric_pair -q
 ```
 
 There's no lint/format tooling configured in this repo.
 
 ## Architecture: the pipeline
 
-`scripts/run_pipeline.py:run()` wires the stages together; each stage is its own module under `pipeline/`:
+All paths in this section are relative to `python_prototype/`. `scripts/run_pipeline.py:run()` wires the
+stages together; each stage is its own module under `pipeline/`:
 
 ```
 preprocessing.preprocess_image(path)
@@ -268,7 +297,8 @@ by formula from the old ones.
 
 ## Testing
 
-Three tiers, deliberately not one (see `tests/*.py` docstrings for the reasoning):
+Paths below are relative to `python_prototype/`. Three tiers, deliberately not one (see `tests/*.py`
+docstrings for the reasoning):
 
 - `test_geometry.py` — synthetic inputs, exact-match assertions on deterministic geometry helpers
   (simplify, `make_valid` handling, mask→polygon, Hough-family shape classification).
