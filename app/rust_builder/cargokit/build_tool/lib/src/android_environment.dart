@@ -150,7 +150,7 @@ class AndroidEnvironment {
     final toolTempDir =
         Platform.environment['CARGOKIT_TOOL_TEMP_DIR'] ?? targetTempDir;
 
-    return {
+    final result = {
       arKey: arValue,
       ccKey: ccValue,
       cfFlagsKey: cFlagsValue,
@@ -164,6 +164,23 @@ class AndroidEnvironment {
       '_CARGOKIT_NDK_LINK_CLANG': ccValue,
       'CARGOKIT_TOOL_TEMP_DIR': toolTempDir,
     };
+
+    // If OPENCV_ANDROID_SDK_PATH is set, point the opencv-rust crate at this
+    // target's ABI slice of the OpenCV Android SDK instead of whatever
+    // desktop OPENCV_INCLUDE_PATHS/OPENCV_LINK_PATHS/OPENCV_LINK_LIBS the host
+    // may already have set (e.g. for a Windows desktop build) - these three
+    // keys always override the inherited process environment since
+    // Process.run merges the returned map over Platform.environment.
+    final openCvSdkPath = Platform.environment['OPENCV_ANDROID_SDK_PATH'];
+    if (openCvSdkPath != null && target.android != null) {
+      final nativeDir = path.join(openCvSdkPath, 'sdk', 'native');
+      result['OPENCV_INCLUDE_PATHS'] = path.join(nativeDir, 'jni', 'include');
+      result['OPENCV_LINK_PATHS'] =
+          path.join(nativeDir, 'libs', target.android!);
+      result['OPENCV_LINK_LIBS'] = 'opencv_java4';
+    }
+
+    return result;
   }
 
   // Workaround for libgcc missing in NDK23, inspired by cargo-ndk

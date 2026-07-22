@@ -354,13 +354,153 @@ The repo root now holds multiple sub-projects side by side:
     `flutter create`-generated file**, same caveat as the Gradle patches above: re-check after any
     regeneration. For `cargo test`/`cargo build` run directly (not through `flutter build`), the OpenCV
     `bin` dir also needs to be on `PATH` for the same reason.
-  - **Android is not wired up yet.** The OpenCV Android SDK (prebuilt per-ABI `.so`s) is downloaded and
-    extracted (see path above) but nothing in `app/rust_builder`'s Gradle/cargokit build currently points
-    at it — cargokit invokes `cargo build --target <abi>-linux-android` per ABI itself, and each of those
-    needs its own `OPENCV_LINK_LIBS`/`OPENCV_LINK_PATHS`/`OPENCV_INCLUDE_PATHS` pointed at that ABI's
-    slice of the Android SDK (plus the resulting `.so` bundled into the APK's `jniLibs`), which is
-    meaningfully more setup than the Windows env vars above and hasn't been attempted yet — a distinct
-    follow-up task, not assumed-done infrastructure.
+  - **Android is now wired up and verified end-to-end**, not just "builds." `flutter build apk --debug`
+    produces a working APK whose `analyzeMap` call was confirmed to actually run the real CV pipeline
+    on-device (not just link) via a new Flutter integration test
+    (`app/integration_test/analyze_android_test.dart`, bundled asset
+    `app/assets/test_fixtures/map0_small.jpg` — a downscaled copy of `python_prototype/testData/map0.jpg`,
+    small enough to ship as a permanent regression fixture) run against a freshly created x86_64 API-34 AVD
+    (`phase1_test`, no emulator/system-image was preinstalled on this machine — installed via `sdkmanager
+    "emulator" "platform-tools" "system-images;android-34;google_apis;x86_64"`): `flutter test
+    integration_test/analyze_android_test.dart -d <device>` → `All tests passed!`. This matters because a
+    green `flutter build apk` alone proves nothing here — see the Windows `STATUS_DLL_NOT_FOUND`
+    non-starting-`app.exe` precedent below for why a build succeeding and the app actually running are
+    different claims.
+    - **`OPENCV_ANDROID_SDK_PATH`** (new persisted user env var, alongside the Windows-only OpenCV vars
+      above) points at the OpenCV Android SDK root
+      (`C:\Users\AlexandrGeorgiev\opencv_tools_android_4\OpenCV-android-sdk`). `app/rust_builder/cargokit/build_tool/lib/src/android_environment.dart`
+      (itself a vendored/copied cargokit file, same "hand-patch, re-check after regeneration" caveat as the
+      Gradle `exec()` fix above) was patched so that whenever this env var is set, `AndroidEnvironment.buildEnvironment()`
+      derives `OPENCV_INCLUDE_PATHS`/`OPENCV_LINK_PATHS`/`OPENCV_LINK_LIBS` from `target.android` (cargokit's
+      own per-ABI directory name, e.g. `arm64-v8a`) and injects them into the env map handed to that
+      target's `cargo build` subprocess — these three keys always win over whatever the Windows desktop
+      build already set at the user-env level, since `Process.run` merges its `environment:` map over the
+      inherited process environment.
+    - **Link target is `libopencv_java4.so` (the single Android "Java bridge" shared lib), not the
+      per-module `staticlibs/<abi>/*.a` files** the SDK also ships — checked directly, not assumed: despite
+      being built for JNI, this `.so` still exports the full mangled C++ symbol set (`llvm-nm -D
+      --defined-only` found 2739 `_ZN2cv...` symbols including `cv::imread`/`cv::Mat::*`), so `opencv-rust`
+      can link against it exactly like the Windows `opencv_world4140.dll`, without needing to reconstruct
+      the right static-lib link order/3rdparty-dependency list by hand.
+    - **`OPENCV_LINK_LIBS`/`OPENCV_LINK_PATHS`/`OPENCV_INCLUDE_PATHS` alone weren't enough** to get a build
+      to even reach the link step: the `opencv` crate's own `build-script-build` (a host Windows binary,
+      run by cargo *before* any Android cross-compilation happens) failed to launch at all with
+      `STATUS_DLL_NOT_FOUND` (exit `0xc0000135`) the first time this ran in cargokit's own separate
+      `app/build/rust_core/build` target-dir (as opposed to the `app/rust/target` dir manual `cargo
+      test`/`cargo build` normally use) — root cause, confirmed by checking `PATH` directly: the persisted
+      `LIBCLANG_PATH` env var tells `clang-sys`'s *build.rs* where to find `libclang.dll` for linking, but
+      does not put that directory on `PATH`, and this particular `clang-sys` build links `libclang.dll` as
+      a hard PE import (not a runtime `dlopen`) — so the compiled `build-script-build.exe` itself needs
+      `C:\Program Files\LLVM\bin` on `PATH` at process-launch time, every time, regardless of target
+      platform. Fixed by prepending it to `PATH` for the build invocation (not yet persisted to the user
+      `PATH` permanently — do that if this keeps needing to be repeated manually).
+    - **A second, unrelated failure surfaced in the same pass**: Gradle's `checkDebugAarMetadata` rejected
+      the build because the then-pinned `file_picker` (`^8.1.6`, resolved `8.3.7`) was compiled against
+      `compileSdk` 34, while the transitively-pulled `flutter_plugin_android_lifecycle` `2.0.35` requires
+      `compileSdk >= 36`. Nothing to do with OpenCV/Android-NDK wiring — fixed by bumping the `pubspec.yaml`
+      constraint to `file_picker: ^10.0.0` (resolved `10.3.10`), which is built against a current enough
+      `compileSdk`.
+    - **`rust_core.so` needs `libc++_shared.so` bundled too, not just `libopencv_java4.so`** — checked
+      directly via `llvm-readelf -d`'s `NEEDED` entries (the `cc`/NDK-`clang++` toolchain `opencv-rust`'s
+      C++ glue goes through links libc++ dynamically by default): `liblog.so`, `libc++_shared.so`,
+      `libopencv_java4.so`, `libdl.so`, `libm.so`, `libc.so`. The first three system libs ship with every
+      Android device; the middle two don't, and Gradle doesn't bundle either automatically just because
+      `librust_core.so` needs them. `libopencv_java4.so` is handled by pointing
+      `android/app/build.gradle.kts`'s `sourceSets.main.jniLibs.srcDirs` at
+      `$OPENCV_ANDROID_SDK_PATH/sdk/native/libs` (gated on that env var being set, same pattern as the
+      Windows CMake DLL-copy step) — that directory's `<abi>/libopencv_java4.so` layout matches Gradle's
+      `jniLibs.srcDirs` convention (one subdirectory per ABI) exactly. `libc++_shared.so` has no equivalent
+      "already laid out per-ABI" source directory to point at, so a small (~1.3-1.8MB per ABI) copy of it
+      from the NDK's own `toolchains/llvm/prebuilt/windows-x86_64/sysroot/usr/lib/<rust-triple>/libc++_shared.so`
+      is checked directly into `app/android/app/src/main/jniLibs/<abi>/` for `arm64-v8a`/`armeabi-v7a`/`x86_64`
+      — small enough, and standard enough practice for Android C++ projects, to vendor rather than
+      env-gate.
+    - **A stale, pre-OpenCV `librust_core.so` for `armeabi-v7a` was found sitting in cargokit's own
+      per-target build directory** (`app/build/rust_core/build/armv7-linux-androideabi`, dated from this
+      repo's original Flutter+Rust scaffold commit, before any CV/OpenCV code existed) and got silently
+      merged into the very first Android build that otherwise looked successful — confirmed via
+      `llvm-readelf -d` showing no `libopencv_java4.so`/`libc++_shared.so` `NEEDED` entries on that one ABI
+      while the other three had them, and via the file's own stale mtime. Root cause: that particular
+      `flutter build apk` invocation's Gradle task simply didn't ask cargokit to rebuild `armeabi-v7a` that
+      time (only 3 of 4 "Building rust_core for ..." lines were logged), but the merge-native-libs step
+      still picked up whatever `.so` happened to already exist on disk for it. A subsequent full rebuild
+      did recompile it correctly (confirmed via the same `NEEDED`-entries check). Take-away for next time:
+      after any Android env/toolchain change, check `NEEDED` entries on **every** ABI's output, not just the
+      one you're actively testing — a stale per-ABI artifact can hide silently behind an otherwise-green
+      build.
+    - **`android/app/build.gradle.kts`'s `ndk.abiFilters = setOf("arm64-v8a", "x86_64")`** was added to
+      intentionally scope out `armeabi-v7a`/`x86` (32-bit, essentially obsolete, unverified) — but checked
+      directly, it did **not** actually keep `armeabi-v7a` out of the packaged debug APK
+      (`app-debug.apk`'s `lib/` entries still include it). Not chased further since a full rebuild made that
+      ABI's artifact valid anyway (see above) and its `libc++_shared.so` was vendored too, so nothing
+      half-wired ships even though the filter didn't do what its comment claims — worth revisiting if a
+      release build needs this to actually restrict ABIs (e.g. via `--split-per-abi`/per-flavor filtering
+      instead).
+  - **Manual-correction UI touch-input bugs, found and fixed by actually using the app on a real phone**
+    (Samsung SM-S948B, Android 16), not just from a build succeeding — several real, non-obvious issues,
+    all in `app/lib/main.dart`'s `AnalyzeScreen`:
+    - **File picker**: `FileType.image` routes Android's `pickFiles` to the system Photos picker, which
+      only shows MediaStore-indexed images — a photo pushed via `adb push` (or saved by a scanner app, or
+      otherwise not yet indexed) doesn't show up there at all, confirmed directly (pushed files were
+      invisible until switched to `FileType.custom` + `allowedExtensions: ['jpg','jpeg','png']`, which uses
+      the generic SAF document picker instead and can browse any folder).
+    - **Two Row-based toolbars overflowed on a real phone's narrower portrait width** (the zoom controls
+      row's "Ctrl + scroll wheel..." hint, and the manual-correction toolbar's descriptive hint next to the
+      "Manual correction" chip) — both fixed by switching `Row(mainAxisSize: MainAxisSize.min)` to `Wrap`,
+      and the zoom hint text is now conditional on `Platform.isAndroid || Platform.isIOS` (shows "Pinch to
+      zoom; drag scrollbars to pan." on touch, the original Ctrl+scroll text on desktop) rather than always
+      showing a desktop-oriented hint that's never even true on a touch device.
+    - **Pinch-to-zoom didn't exist at all initially** — the viewer only had `onPanStart/Update/End` (mouse-
+      drag-to-move-a-marker on desktop) plus Ctrl+wheel zoom, neither of which is meaningful on a touch
+      screen. Fixed by switching to `onScaleStart/Update/End` (GestureDetector treats Pan and Scale as
+      mutually exclusive — providing both throws — and Scale's `pointerCount` already covers the 1-finger
+      marker-drag case too), which took several real-device iterations to get right, each a distinct,
+      confirmed-on-hardware bug, not a hypothetical:
+      - **Zoom always grew from the top-left corner**, not the pinch centre — because the viewed content is
+        a plain `SizedBox` sized by `displayWidth/Height` inside a scrollable, not a transform around a
+        pivot point, so scale changes alone don't preserve any particular screen point. Fixed by capturing
+        the pinch's focal point in native-image-space once at gesture start (`_scaleFocalImagePt`) and, on
+        every zoom change, compensating both scroll controllers by `anchor * (newScale - oldScale)`
+        (`_zoomAnchored`) so that native-image point stays visually fixed under the fingers. The same helper
+        was reused for the +/-/Reset zoom buttons, anchored to the current viewport centre
+        (`_viewportCenterImagePt`) instead of the top-left corner, since a button press has no finger
+        position of its own to anchor to.
+      - **Dragging a selected marker scrolled the page instead of moving the marker** — confirmed directly:
+        this is the ancestor `SingleChildScrollView`s' own touch-drag recognizer winning the gesture arena
+        over the GestureDetector's Scale recognizer for the same finger, something the original desktop-only
+        design didn't need to consider (`ScrollBehavior.dragDevices` excludes mouse by default, so a mouse
+        drag never competed with the same click-drag-to-move-a-marker gesture, but touch was never
+        excluded). Fixed with a custom `_NoTouchDragScrollBehavior` (`ScrollConfiguration` around the
+        Scrollbar/SingleChildScrollView pair) whose `dragDevices` excludes `PointerDeviceKind.touch` —
+        the scroll views no longer claim touch drags at all, leaving the GestureDetector as sole claimant,
+        while mouse/stylus/trackpad drag and the visible Scrollbar thumbs (not gated by `dragDevices`) still
+        pan normally.
+      - **A plain 2-finger pan (no deliberate pinch) visibly drifted toward the bottom-right corner** —
+        confirmed directly: real fingers' inter-touch distance drifts slightly even during a pure translate,
+        so `ScaleUpdateDetails.scale` is never exactly `1.0`, and reacting to that noise as a "real" zoom
+        (however tiny) via the anchor-compensation above reads back as a small scroll push every frame,
+        accumulating into visible drift over a longer gesture. Fixed with a deadband (`(newZoomRaw -
+        _zoom).abs() > _zoom * 0.01`) below which zoom is left alone entirely, plus explicitly applying
+        `ScaleUpdateDetails.focalPointDelta` (the frame-to-frame translation of the pinch centre) as an
+        ordinary scroll-by every update, so a deliberate 2-finger drag pans the view directly instead of
+        only ever being (mis)read as noise.
+      - **Visible shake/jitter during 2-finger panning even after the deadband**, plus **the view
+        "teleported" right when fingers were lifted off after a drag** — two related but distinct bugs.
+        The jitter was partly because the zoom-anchor scroll compensation is deliberately deferred a frame
+        (`addPostFrameCallback`, needed since `maxScrollExtent` only reflects a new zoom's content size once
+        that frame has actually laid out) — applying the *translation* delta through that same deferred path
+        added a needless extra frame of lag on top, fixed by giving translation its own immediate,
+        non-deferred `_scrollByNow`. The teleport-on-release was a separate, well-known
+        `ScaleGestureRecognizer` quirk: Flutter recomputes the gesture's focal point from scratch whenever
+        the pointer count changes mid-gesture (the midpoint of 2 touches vs. a single remaining touch's own
+        position once one finger lifts), which is a real discontinuous jump in `focalPoint`/`focalPointDelta`
+        for that one transitional frame, not motion — confirmed by reproducing it reliably on release every
+        time. Fixed by tracking `pointerCount` across updates (`_scaleLastPointerCount`) and skipping
+        reacting entirely on the one frame where it changes.
+      None of this was caught by the Windows desktop build or the `analyze_android_test.dart` integration
+      test (which only exercises the FFI/OpenCV call path, not touch gesture handling) — it only surfaced by
+      actually operating the manual-correction UI with fingers on real hardware, the same "don't trust a
+      build succeeding" lesson as the Windows CMake DLL-bundling fix and the Android OpenCV wiring above.
   - **GUI verification caveat**: this repo is sometimes worked on from a non-interactive background
     session with no attached Windows desktop, where a launched GUI app never renders a visible window
     (`MainWindowHandle` stays `0`) even though it's running correctly. Don't treat a blank/handle-0 window

@@ -29,6 +29,19 @@ class MyApp extends StatelessWidget {
   }
 }
 
+// Excludes touch from the scrollables' own drag-to-scroll recognizer in the
+// analysis viewer, so it doesn't fight the GestureDetector there for the
+// same finger (see the `ScrollConfiguration` call site). Mouse/stylus/
+// trackpad drag and the visible Scrollbar thumbs are unaffected.
+class _NoTouchDragScrollBehavior extends MaterialScrollBehavior {
+  @override
+  Set<PointerDeviceKind> get dragDevices => const {
+        PointerDeviceKind.mouse,
+        PointerDeviceKind.stylus,
+        PointerDeviceKind.trackpad,
+      };
+}
+
 // Mirrors the Rust side's `analyze::HOUGH_PARAM2_DEFAULT` -- plain consts
 // aren't bridged by flutter_rust_bridge, so this is kept in sync by hand.
 // Deliberately *not* a per-file calibration table (see `ExcludeBox`'s doc
@@ -146,8 +159,28 @@ class _AnalyzeScreenState extends State<AnalyzeScreen> {
   static const double _minZoom = 0.5;
   static const double _maxZoom = 6.0;
   double _zoom = 1.0;
+  // Zoom value at the start of the current pinch gesture -- ScaleUpdateDetails.scale
+  // is cumulative relative to gesture start, not incremental, so `_setZoom` needs
+  // this as its base rather than multiplying the live `_zoom` on every frame.
+  double _scaleStartZoom = 1.0;
+  // Native-image-space point the current pinch is anchored to, captured once at
+  // gesture start -- keeps the same map point under the fingers as zoom changes,
+  // instead of the content only ever growing from its top-left corner.
+  Offset? _scaleFocalImagePt;
   final ScrollController _hScrollController = ScrollController();
   final ScrollController _vScrollController = ScrollController();
+  // Captured at the top of the LayoutBuilder in the map viewer on every build,
+  // so zoom-anchoring math is available to the +/-/Reset buttons too, which
+  // live outside that LayoutBuilder's own scope.
+  double _lastBaseScale = 1.0;
+  Size _lastViewportSize = Size.zero;
+  // Tracks pointer count across onScaleUpdate calls -- Flutter recomputes
+  // the gesture's focal point from scratch whenever a finger joins/leaves
+  // mid-gesture (e.g. the midpoint of 2 touches vs. a single remaining
+  // touch's own position), which is a real, discontinuous jump, not motion.
+  // Confirmed on-device: reacting to that one frame's `focalPointDelta` is
+  // what caused the view to "teleport" right as fingers lifted off a pan.
+  int _scaleLastPointerCount = 0;
 
   @override
   void dispose() {
@@ -157,6 +190,52 @@ class _AnalyzeScreenState extends State<AnalyzeScreen> {
   }
 
   void _setZoom(double z) => setState(() => _zoom = z.clamp(_minZoom, _maxZoom));
+
+  // For adjustments that don't change content size (a pure pan) -- applied
+  // immediately, since scroll extents are already correct and there's no
+  // layout to wait for.
+  void _scrollByNow(double ddx, double ddy) {
+    if (_hScrollController.hasClients) {
+      final pos = _hScrollController.position;
+      _hScrollController.jumpTo((pos.pixels + ddx).clamp(pos.minScrollExtent, pos.maxScrollExtent));
+    }
+    if (_vScrollController.hasClients) {
+      final pos = _vScrollController.position;
+      _vScrollController.jumpTo((pos.pixels + ddy).clamp(pos.minScrollExtent, pos.maxScrollExtent));
+    }
+  }
+
+  // Deferred a frame since maxScrollExtent only reflects a new zoom's
+  // displayWidth/Height once that setState's rebuild has actually laid out.
+  void _scrollBy(double ddx, double ddy) {
+    WidgetsBinding.instance.addPostFrameCallback((_) => _scrollByNow(ddx, ddy));
+  }
+
+  // Native-image-space point currently at the centre of the viewport -- the
+  // anchor the +/-/Reset buttons zoom around, since they have no finger
+  // position to anchor to the way a pinch does.
+  Offset _viewportCenterImagePt() {
+    final scale = _lastBaseScale * _zoom;
+    if (scale <= 0) return Offset.zero;
+    final hOffset = _hScrollController.hasClients ? _hScrollController.position.pixels : 0.0;
+    final vOffset = _vScrollController.hasClients ? _vScrollController.position.pixels : 0.0;
+    return Offset(
+      (hOffset + _lastViewportSize.width / 2) / scale,
+      (vOffset + _lastViewportSize.height / 2) / scale,
+    );
+  }
+
+  // Changes zoom while keeping `anchorImagePt` (a native-image-space point)
+  // visually fixed under it, instead of the content only ever growing from
+  // its top-left corner -- shared by the +/-/Reset buttons (anchored to the
+  // viewport centre) and the pinch handler (anchored to the pinch centre).
+  void _zoomAnchored(double newZoomRaw, Offset anchorImagePt) {
+    final oldScale = _lastBaseScale * _zoom;
+    final newZoom = newZoomRaw.clamp(_minZoom, _maxZoom);
+    setState(() => _zoom = newZoom);
+    final newScale = _lastBaseScale * newZoom;
+    _scrollBy(anchorImagePt.dx * (newScale - oldScale), anchorImagePt.dy * (newScale - oldScale));
+  }
 
   void _initEditableState(AnalyzeResult result) {
     var nextId = 0;
@@ -312,7 +391,13 @@ class _AnalyzeScreenState extends State<AnalyzeScreen> {
 
   Future<void> _pickAndAnalyze() async {
     final picked = await FilePicker.platform.pickFiles(
-      type: FileType.image,
+      // FileType.image routes to Android's Photos picker, which only shows
+      // MediaStore-indexed images - a photographed map saved to Downloads
+      // (or pushed via adb, or exported from a scanner app) may never be
+      // indexed there. FileType.custom uses the generic SAF document picker
+      // instead, which can browse any folder.
+      type: FileType.custom,
+      allowedExtensions: const ['jpg', 'jpeg', 'png'],
       withData: true,
     );
     final bytes = picked?.files.single.bytes;
@@ -466,11 +551,11 @@ class _AnalyzeScreenState extends State<AnalyzeScreen> {
                           'terrain: ${result.routeTerrainBreakdown.map((f) => "${f.className}=${(f.fraction * 100).toStringAsFixed(0)}%").join(", ")} '
                           '-- connectivity proof, not a real course route',
                 ),
-                Row(
-                  mainAxisSize: MainAxisSize.min,
+                Wrap(
+                  crossAxisAlignment: WrapCrossAlignment.center,
+                  spacing: 8,
                   children: [
                     Text('GeoJSON: ${result.geojson.length} bytes (raw detection)'),
-                    const SizedBox(width: 8),
                     TextButton(onPressed: _saveGeoJson, child: const Text('Save GeoJSON (with corrections)...')),
                   ],
                 ),
@@ -510,25 +595,39 @@ class _AnalyzeScreenState extends State<AnalyzeScreen> {
                   onMinAreaChanged: (v) => setState(() => _minPolygonAreaPx = v),
                 ),
                 const SizedBox(height: 12),
-                Row(
-                  mainAxisSize: MainAxisSize.min,
+                Wrap(
+                  crossAxisAlignment: WrapCrossAlignment.center,
+                  spacing: 4,
                   children: [
                     IconButton(
                       tooltip: 'Zoom out',
                       icon: const Icon(Icons.zoom_out),
-                      onPressed: _zoom > _minZoom ? () => _setZoom(_zoom / 1.25) : null,
+                      onPressed: _zoom > _minZoom
+                          ? () => _zoomAnchored(_zoom / 1.25, _viewportCenterImagePt())
+                          : null,
                     ),
                     SizedBox(width: 56, child: Text('${(_zoom * 100).round()}%', textAlign: TextAlign.center)),
                     IconButton(
                       tooltip: 'Zoom in',
                       icon: const Icon(Icons.zoom_in),
-                      onPressed: _zoom < _maxZoom ? () => _setZoom(_zoom * 1.25) : null,
+                      onPressed: _zoom < _maxZoom
+                          ? () => _zoomAnchored(_zoom * 1.25, _viewportCenterImagePt())
+                          : null,
                     ),
-                    TextButton(onPressed: () => _setZoom(1.0), child: const Text('Reset')),
+                    TextButton(
+                      onPressed: () => _zoomAnchored(1.0, _viewportCenterImagePt()),
+                      child: const Text('Reset'),
+                    ),
                     const SizedBox(width: 8),
-                    const Text(
-                      'Ctrl + scroll wheel also zooms; scrollbars/trackpad pan when zoomed in.',
-                      style: TextStyle(fontSize: 12, color: Colors.black54),
+                    // Ctrl+scroll only exists with a physical keyboard/mouse -- on a
+                    // touch device that hint is not just unhelpful but never true, so
+                    // it's swapped for the touch equivalent (pinch, wired up below)
+                    // instead of always showing the desktop-oriented text.
+                    Text(
+                      (Platform.isAndroid || Platform.isIOS)
+                          ? 'Pinch to zoom; drag scrollbars to pan.'
+                          : 'Ctrl + scroll wheel also zooms; scrollbars/trackpad pan when zoomed in.',
+                      style: const TextStyle(fontSize: 12, color: Colors.black54),
                     ),
                   ],
                 ),
@@ -560,19 +659,34 @@ class _AnalyzeScreenState extends State<AnalyzeScreen> {
                     // via `canvas.scale(scale)` below.
                     Offset toImageSpace(Offset local) => scale > 0 ? local / scale : local;
                     final viewportHeight = min(700.0, MediaQuery.sizeOf(context).height * 0.7);
-                    return Listener(
-                      // Ctrl+wheel zooms (centered on the cursor is a nice-to-
-                      // have skipped here, plain zoom is enough); a plain
-                      // wheel/trackpad scroll is left alone so it keeps
-                      // scrolling the nested scroll views below instead.
-                      onPointerSignal: (event) {
-                        if (event is PointerScrollEvent && HardwareKeyboard.instance.isControlPressed) {
-                          _setZoom(_zoom * (event.scrollDelta.dy < 0 ? 1.1 : 1 / 1.1));
-                        }
-                      },
-                      child: SizedBox(
-                        height: viewportHeight,
-                        child: Scrollbar(
+                    _lastBaseScale = baseScale;
+                    _lastViewportSize = Size(constraints.maxWidth, viewportHeight);
+                    return ScrollConfiguration(
+                      // On touch devices, SingleChildScrollView's own drag-to-scroll
+                      // recognizer and the GestureDetector below's scale recognizer
+                      // both want the same finger -- confirmed directly on a real
+                      // phone: dragging a selected marker scrolled the page instead of
+                      // moving it, because the ancestor scroll view was winning the
+                      // gesture arena. Excluding touch from `dragDevices` here stops
+                      // these scroll views from claiming touch drags at all, leaving
+                      // the GestureDetector as sole claimant (marker drag with one
+                      // finger, pinch-zoom with two); mouse/stylus/trackpad drag -- and
+                      // the visible Scrollbar thumbs, which aren't gated by
+                      // `dragDevices` at all -- still pan normally.
+                      behavior: _NoTouchDragScrollBehavior(),
+                      child: Listener(
+                        // Ctrl+wheel zooms (centered on the cursor is a nice-to-
+                        // have skipped here, plain zoom is enough); a plain
+                        // wheel/trackpad scroll is left alone so it keeps
+                        // scrolling the nested scroll views below instead.
+                        onPointerSignal: (event) {
+                          if (event is PointerScrollEvent && HardwareKeyboard.instance.isControlPressed) {
+                            _setZoom(_zoom * (event.scrollDelta.dy < 0 ? 1.1 : 1 / 1.1));
+                          }
+                        },
+                        child: SizedBox(
+                          height: viewportHeight,
+                          child: Scrollbar(
                           controller: _vScrollController,
                           thumbVisibility: true,
                           notificationPredicate: (n) => n.depth == 0,
@@ -591,9 +705,57 @@ class _AnalyzeScreenState extends State<AnalyzeScreen> {
                                   child: GestureDetector(
                                     behavior: HitTestBehavior.opaque,
                                     onTapUp: (details) => _handleTapUp(toImageSpace(details.localPosition)),
-                                    onPanStart: (details) => _handlePanStart(toImageSpace(details.localPosition)),
-                                    onPanUpdate: (details) => _handlePanUpdate(toImageSpace(details.localPosition)),
-                                    onPanEnd: (_) => _handlePanEnd(),
+                                    // Scale (not Pan) handlers, so a 2-finger pinch on
+                                    // touch devices zooms -- GestureDetector treats pan
+                                    // and scale recognizers as mutually exclusive
+                                    // (providing both throws), and Scale's callbacks
+                                    // already cover the 1-finger case too via
+                                    // `pointerCount`.
+                                    onScaleStart: (details) {
+                                      _scaleStartZoom = _zoom;
+                                      _scaleFocalImagePt = toImageSpace(details.localFocalPoint);
+                                      _scaleLastPointerCount = details.pointerCount;
+                                      _handlePanStart(toImageSpace(details.localFocalPoint));
+                                    },
+                                    onScaleUpdate: (details) {
+                                      final pointerCountChanged = details.pointerCount != _scaleLastPointerCount;
+                                      _scaleLastPointerCount = details.pointerCount;
+                                      if (details.pointerCount > 1) {
+                                        if (pointerCountChanged) {
+                                          // A finger just joined or left mid-gesture -- Flutter recomputes
+                                          // the focal point from scratch for the new pointer set (e.g. the
+                                          // midpoint of 2 touches vs. a single remaining touch), which is a
+                                          // discontinuous jump, not real motion. Skip this one frame rather
+                                          // than applying it as a scroll delta.
+                                          return;
+                                        }
+                                        final newZoomRaw = _scaleStartZoom * details.scale;
+                                        // A genuine 2-finger drag (not a pinch) still reports `scale` away
+                                        // from 1.0 by small fractions every single frame -- real fingers
+                                        // drift apart/together slightly during a deliberate pan -- and
+                                        // reacting to that noise every frame (rebuild + deferred scroll
+                                        // correction) is what caused the visible shake/jitter, confirmed
+                                        // on-device. Below this threshold, treat it as pure pan: no zoom,
+                                        // no rebuild, just move the view with the fingers.
+                                        if ((newZoomRaw - _zoom).abs() > _zoom * 0.01) {
+                                          final anchor =
+                                              _scaleFocalImagePt ?? toImageSpace(details.localFocalPoint);
+                                          _zoomAnchored(newZoomRaw, anchor);
+                                        }
+                                        // Applied immediately (not deferred): unlike the zoom-anchor
+                                        // correction above, a pure translation doesn't change content
+                                        // size, so scroll extents are already correct -- deferring this
+                                        // too was adding a needless extra frame of lag on top of the
+                                        // jitter fixed above.
+                                        _scrollByNow(-details.focalPointDelta.dx, -details.focalPointDelta.dy);
+                                      } else {
+                                        _handlePanUpdate(toImageSpace(details.localFocalPoint));
+                                      }
+                                    },
+                                    onScaleEnd: (_) {
+                                      _scaleFocalImagePt = null;
+                                      _handlePanEnd();
+                                    },
                                     child: Stack(
                                       children: [
                                         // `fit: BoxFit.fill` is required, not cosmetic: the default
@@ -636,7 +798,8 @@ class _AnalyzeScreenState extends State<AnalyzeScreen> {
                           ),
                         ),
                       ),
-                    );
+                    ),
+                  );
                   },
                 ),
                 const SizedBox(height: 8),
@@ -812,8 +975,10 @@ class _EditToolbar extends StatelessWidget {
     return Column(
       crossAxisAlignment: CrossAxisAlignment.start,
       children: [
-        Row(
-          mainAxisSize: MainAxisSize.min,
+        Wrap(
+          spacing: 8,
+          runSpacing: 4,
+          crossAxisAlignment: WrapCrossAlignment.center,
           children: [
             FilterChip(
               label: const Text('Manual correction'),
@@ -821,13 +986,11 @@ class _EditToolbar extends StatelessWidget {
               selected: editMode,
               onSelected: (_) => onToggleEditMode(),
             ),
-            if (!editMode) ...[
-              const SizedBox(width: 8),
+            if (!editMode)
               const Text(
                 'add/move/delete controls, recolor terrain -- prompt.txt\'s mandatory correction layer',
                 style: TextStyle(fontStyle: FontStyle.italic, fontSize: 12),
               ),
-            ],
           ],
         ),
         if (editMode) ...[
