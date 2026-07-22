@@ -38,7 +38,7 @@ flutter_rust_bridge::frb_generated_boilerplate!(
     default_rust_auto_opaque = RustAutoOpaqueMoi,
 );
 pub(crate) const FLUTTER_RUST_BRIDGE_CODEGEN_VERSION: &str = "2.12.0";
-pub(crate) const FLUTTER_RUST_BRIDGE_CODEGEN_CONTENT_HASH: i32 = -1223567005;
+pub(crate) const FLUTTER_RUST_BRIDGE_CODEGEN_CONTENT_HASH: i32 = 1167126195;
 
 // Section: executor
 
@@ -179,6 +179,63 @@ fn wire__crate__api__simple__init_app_impl(
                     let output_ok = Result::<_, ()>::Ok({
                         crate::api::simple::init_app();
                     })?;
+                    Ok(output_ok)
+                })())
+            }
+        },
+    )
+}
+fn wire__crate__api__analyze__rebuild_geojson_impl(
+    port_: flutter_rust_bridge::for_generated::MessagePort,
+    ptr_: flutter_rust_bridge::for_generated::PlatformGeneralizedUint8ListPtr,
+    rust_vec_len_: i32,
+    data_len_: i32,
+) {
+    FLUTTER_RUST_BRIDGE_HANDLER.wrap_normal::<flutter_rust_bridge::for_generated::SseCodec, _, _>(
+        flutter_rust_bridge::for_generated::TaskInfo {
+            debug_name: "rebuild_geojson",
+            port: Some(port_),
+            mode: flutter_rust_bridge::for_generated::FfiCallMode::Normal,
+        },
+        move || {
+            let message = unsafe {
+                flutter_rust_bridge::for_generated::Dart2RustMessageSse::from_wire(
+                    ptr_,
+                    rust_vec_len_,
+                    data_len_,
+                )
+            };
+            let mut deserializer =
+                flutter_rust_bridge::for_generated::SseDeserializer::new(message);
+            let api_segmentation =
+                <crate::api::segmentation::SegmentationResult>::sse_decode(&mut deserializer);
+            let api_course =
+                <crate::api::course_detection::CourseResult>::sse_decode(&mut deserializer);
+            let api_route =
+                <Option<crate::api::pathfinding::RouteResult>>::sse_decode(&mut deserializer);
+            let api_route_terrain_breakdown =
+                <Vec<crate::api::cost_grid::TerrainFraction>>::sse_decode(&mut deserializer);
+            let api_width = <i32>::sse_decode(&mut deserializer);
+            let api_height = <i32>::sse_decode(&mut deserializer);
+            let api_scale_to_original = <f32>::sse_decode(&mut deserializer);
+            let api_mn_line_spacing_px = <Option<f32>>::sse_decode(&mut deserializer);
+            let api_quad_found = <bool>::sse_decode(&mut deserializer);
+            let api_source_filename = <String>::sse_decode(&mut deserializer);
+            deserializer.end();
+            move |context| {
+                transform_result_sse::<_, ()>((move || {
+                    let output_ok = Result::<_, ()>::Ok(crate::api::analyze::rebuild_geojson(
+                        api_segmentation,
+                        api_course,
+                        api_route,
+                        api_route_terrain_breakdown,
+                        api_width,
+                        api_height,
+                        api_scale_to_original,
+                        api_mn_line_spacing_px,
+                        api_quad_found,
+                        api_source_filename,
+                    ))?;
                     Ok(output_ok)
                 })())
             }
@@ -629,7 +686,8 @@ fn pde_ffi_dispatcher_primary_impl(
             data_len,
         ),
         4 => wire__crate__api__simple__init_app_impl(port, ptr, rust_vec_len, data_len),
-        5 => wire__crate__api__preprocessing__rectify_photo_impl(port, ptr, rust_vec_len, data_len),
+        5 => wire__crate__api__analyze__rebuild_geojson_impl(port, ptr, rust_vec_len, data_len),
+        6 => wire__crate__api__preprocessing__rectify_photo_impl(port, ptr, rust_vec_len, data_len),
         _ => unreachable!(),
     }
 }

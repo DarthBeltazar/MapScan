@@ -35,6 +35,9 @@ abstract class RustLibApiImplPlatform extends BaseApiImpl<RustLibWire> {
   bool dco_decode_bool(dynamic raw);
 
   @protected
+  CourseResult dco_decode_box_autoadd_course_result(dynamic raw);
+
+  @protected
   double dco_decode_box_autoadd_f_32(dynamic raw);
 
   @protected
@@ -42,6 +45,9 @@ abstract class RustLibApiImplPlatform extends BaseApiImpl<RustLibWire> {
 
   @protected
   RouteResult dco_decode_box_autoadd_route_result(dynamic raw);
+
+  @protected
+  SegmentationResult dco_decode_box_autoadd_segmentation_result(dynamic raw);
 
   @protected
   ClassPolygons dco_decode_class_polygons(dynamic raw);
@@ -143,6 +149,11 @@ abstract class RustLibApiImplPlatform extends BaseApiImpl<RustLibWire> {
   bool sse_decode_bool(SseDeserializer deserializer);
 
   @protected
+  CourseResult sse_decode_box_autoadd_course_result(
+    SseDeserializer deserializer,
+  );
+
+  @protected
   double sse_decode_box_autoadd_f_32(SseDeserializer deserializer);
 
   @protected
@@ -150,6 +161,11 @@ abstract class RustLibApiImplPlatform extends BaseApiImpl<RustLibWire> {
 
   @protected
   RouteResult sse_decode_box_autoadd_route_result(SseDeserializer deserializer);
+
+  @protected
+  SegmentationResult sse_decode_box_autoadd_segmentation_result(
+    SseDeserializer deserializer,
+  );
 
   @protected
   ClassPolygons sse_decode_class_polygons(SseDeserializer deserializer);
@@ -259,6 +275,12 @@ abstract class RustLibApiImplPlatform extends BaseApiImpl<RustLibWire> {
   void sse_encode_bool(bool self, SseSerializer serializer);
 
   @protected
+  void sse_encode_box_autoadd_course_result(
+    CourseResult self,
+    SseSerializer serializer,
+  );
+
+  @protected
   void sse_encode_box_autoadd_f_32(double self, SseSerializer serializer);
 
   @protected
@@ -267,6 +289,12 @@ abstract class RustLibApiImplPlatform extends BaseApiImpl<RustLibWire> {
   @protected
   void sse_encode_box_autoadd_route_result(
     RouteResult self,
+    SseSerializer serializer,
+  );
+
+  @protected
+  void sse_encode_box_autoadd_segmentation_result(
+    SegmentationResult self,
     SseSerializer serializer,
   );
 

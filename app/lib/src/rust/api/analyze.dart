@@ -26,6 +26,43 @@ Future<AnalyzeResult> analyzeMap({
   sourceFilename: sourceFilename,
 );
 
+/// Rebuilds the GeoJSON document from a (possibly hand-corrected) copy of
+/// `segmentation`/`course` -- the manual-correction UI edits plain Dart-side
+/// copies of those structs (add/move/delete a control or start/finish
+/// marker, reclassify a terrain polygon's `class_name`), then calls this to
+/// get an export that reflects the correction instead of the raw detection.
+/// `route`/`route_terrain_breakdown` are passed through unchanged: this pass
+/// of the correction UI doesn't recompute the cost grid or route from edited
+/// terrain/controls yet (a deliberate scope cut, not an oversight -- see
+/// `PHASE0_HANDOFF.md` on control-sequencing being separate follow-up work),
+/// so a route already found against the original detection may no longer
+/// reflect a moved control; the export is still geometrically the true
+/// corrected map, it's only the route/terrain_breakdown properties that can
+/// go stale after an edit that affects them.
+Future<String> rebuildGeojson({
+  required SegmentationResult segmentation,
+  required CourseResult course,
+  RouteResult? route,
+  required List<TerrainFraction> routeTerrainBreakdown,
+  required int width,
+  required int height,
+  required double scaleToOriginal,
+  double? mnLineSpacingPx,
+  required bool quadFound,
+  required String sourceFilename,
+}) => RustLib.instance.api.crateApiAnalyzeRebuildGeojson(
+  segmentation: segmentation,
+  course: course,
+  route: route,
+  routeTerrainBreakdown: routeTerrainBreakdown,
+  width: width,
+  height: height,
+  scaleToOriginal: scaleToOriginal,
+  mnLineSpacingPx: mnLineSpacingPx,
+  quadFound: quadFound,
+  sourceFilename: sourceFilename,
+);
+
 class AnalyzeResult {
   /// Rectified, white-balanced image, PNG-encoded.
   final Uint8List imagePng;

@@ -144,6 +144,46 @@ fn analyze_map_impl(
     })
 }
 
+/// Rebuilds the GeoJSON document from a (possibly hand-corrected) copy of
+/// `segmentation`/`course` -- the manual-correction UI edits plain Dart-side
+/// copies of those structs (add/move/delete a control or start/finish
+/// marker, reclassify a terrain polygon's `class_name`), then calls this to
+/// get an export that reflects the correction instead of the raw detection.
+/// `route`/`route_terrain_breakdown` are passed through unchanged: this pass
+/// of the correction UI doesn't recompute the cost grid or route from edited
+/// terrain/controls yet (a deliberate scope cut, not an oversight -- see
+/// `PHASE0_HANDOFF.md` on control-sequencing being separate follow-up work),
+/// so a route already found against the original detection may no longer
+/// reflect a moved control; the export is still geometrically the true
+/// corrected map, it's only the route/terrain_breakdown properties that can
+/// go stale after an edit that affects them.
+#[allow(clippy::too_many_arguments)]
+pub fn rebuild_geojson(
+    segmentation: SegmentationResult,
+    course: CourseResult,
+    route: Option<RouteResult>,
+    route_terrain_breakdown: Vec<TerrainFraction>,
+    width: i32,
+    height: i32,
+    scale_to_original: f32,
+    mn_line_spacing_px: Option<f32>,
+    quad_found: bool,
+    source_filename: String,
+) -> String {
+    vectorize::build_geojson(
+        &segmentation,
+        &course,
+        route.as_ref(),
+        &route_terrain_breakdown,
+        width,
+        height,
+        scale_to_original,
+        mn_line_spacing_px,
+        quad_found,
+        &source_filename,
+    )
+}
+
 /// Phase 0 has no control-sequencing/course-graph yet (`course_detection`
 /// only returns an unordered control list) -- so the demo route this picks
 /// is just "start -> nearest control", or the first two detected controls if
@@ -170,4 +210,29 @@ fn pick_demo_route_endpoints(course: &CourseResult) -> Option<(Pt, Pt)> {
         return Some((Pt { x: a.x, y: a.y }, Pt { x: b.x, y: b.y }));
     }
     None
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::api::geometry::Polygon;
+    use crate::api::segmentation::ClassPolygons;
+
+    #[test]
+    fn rebuild_geojson_reflects_a_corrected_class_name() {
+        let seg = SegmentationResult {
+            polygons_by_class: vec![ClassPolygons {
+                // A manual correction: a polygon originally detected as
+                // "rock" gets reclassified to "forest" by the user.
+                class_name: "forest".to_string(),
+                polygons: vec![Polygon { points: vec![Pt { x: 0.0, y: 0.0 }, Pt { x: 10.0, y: 0.0 }, Pt { x: 10.0, y: 10.0 }] }],
+            }],
+            paths: vec![],
+        };
+        let course = CourseResult::default();
+        let json_str = rebuild_geojson(seg, course, None, vec![], 100, 100, 1.0, None, true, "test.jpg".to_string());
+        let v: serde_json::Value = serde_json::from_str(&json_str).unwrap();
+        assert_eq!(v["features"][0]["properties"]["terrain_class"], "forest");
+        assert_eq!(v["properties"]["source_photo"], "test.jpg");
+    }
 }

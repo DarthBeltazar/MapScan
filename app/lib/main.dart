@@ -1,10 +1,15 @@
+import 'dart:convert';
 import 'dart:io';
-import 'dart:typed_data';
+import 'dart:math';
 
 import 'package:file_picker/file_picker.dart';
+import 'package:flutter/gestures.dart';
 import 'package:flutter/material.dart';
+import 'package:flutter/services.dart';
 import 'package:app/src/rust/api/analyze.dart';
+import 'package:app/src/rust/api/course_detection.dart';
 import 'package:app/src/rust/api/geometry.dart';
+import 'package:app/src/rust/api/pathfinding.dart';
 import 'package:app/src/rust/api/segmentation.dart';
 import 'package:app/src/rust/frb_generated.dart';
 
@@ -45,6 +50,54 @@ class AnalyzeScreen extends StatefulWidget {
 const List<String> _terrainLayerKeys = ['water', 'out_of_bounds', 'rock', 'marsh', 'forest', 'clearing', 'thicket'];
 const List<String> _otherLayerKeys = ['paths', 'legs', 'controls', 'route'];
 
+/// Manual-correction UI: this is `prompt.txt`'s hard requirement ("add/move/
+/// delete a control, recolor a terrain area") that nothing in this repo
+/// implements yet -- automatic detection is explicitly "best-effort, human
+/// cleans up downstream" throughout the Rust port (see CLAUDE.md), and this
+/// is that downstream cleanup step.
+///
+/// `start`/`finish` are modeled as the same marker kind as an ordinary
+/// control (just visually distinct) rather than a separate data shape --
+/// they're all "a point the user can add/move/delete", and `detect_start_
+/// triangle` reliably returning `None` on every in-scope photo (see
+/// CLAUDE.md) means letting a user manually place a start marker is not an
+/// edge case, it's the common case.
+enum _MarkerKind { control, start, finish }
+
+enum _EditTool { moveDelete, addMarker, recolor }
+
+class _EditableMarker {
+  final int id;
+  final _MarkerKind kind;
+  final double x;
+  final double y;
+  final double radius;
+  final String? code;
+
+  const _EditableMarker({
+    required this.id,
+    required this.kind,
+    required this.x,
+    required this.y,
+    this.radius = 10.0,
+    this.code,
+  });
+
+  _EditableMarker moved(double nx, double ny) =>
+      _EditableMarker(id: id, kind: kind, x: nx, y: ny, radius: radius, code: code);
+}
+
+class _EditablePolygon {
+  final int id;
+  final String className;
+  final List<Pt> points;
+
+  const _EditablePolygon({required this.id, required this.className, required this.points});
+
+  _EditablePolygon recolored(String newClassName) =>
+      _EditablePolygon(id: id, className: newClassName, points: points);
+}
+
 class _AnalyzeScreenState extends State<AnalyzeScreen> {
   Uint8List? _sourceBytes;
   AnalyzeResult? _result;
@@ -64,6 +117,198 @@ class _AnalyzeScreenState extends State<AnalyzeScreen> {
   Set<String> _hiddenLayers = {};
   double _minPolygonAreaPx = 0.0;
   String? _sourceFilename;
+
+  // Manual-correction state -- initialized from `_result` right after
+  // analysis (see `_initEditableState`), then mutated only by the edit tools
+  // below. `_result.segmentation`/`.course` themselves are never mutated:
+  // they stay the honest "what detection actually found" record, and these
+  // lists are the separate "what the user corrected it to" layer that
+  // painting and GeoJSON export read from instead once analysis has run.
+  List<_EditableMarker> _markers = [];
+  List<_EditablePolygon> _polygons = [];
+  int _nextEditId = 0;
+  bool _editMode = false;
+  _EditTool _tool = _EditTool.moveDelete;
+  _MarkerKind _addKind = _MarkerKind.control;
+  String _recolorTarget = _terrainLayerKeys.first;
+  int? _selectedMarkerId;
+  int? _draggingMarkerId;
+
+  // Zoom: the working image (up to ~3000px wide) is downscaled to fit the
+  // window by default (`_baseFitScale` below), which is fine for an overview
+  // but too coarse to place a control precisely -- `_zoom` is a user-facing
+  // multiplier on top of that fit scale, not a replacement for it. Panning
+  // around a zoomed-in image uses ordinary scrollbars/trackpad/wheel
+  // scrolling, not click-drag -- Flutter's default desktop `ScrollBehavior`
+  // only treats touch/stylus drag as a scroll gesture, not mouse drag (see
+  // `dragDevices`), so this doesn't fight the mouse-drag-to-move-a-marker
+  // gesture already wired up below; both can coexist on the same canvas.
+  static const double _minZoom = 0.5;
+  static const double _maxZoom = 6.0;
+  double _zoom = 1.0;
+  final ScrollController _hScrollController = ScrollController();
+  final ScrollController _vScrollController = ScrollController();
+
+  @override
+  void dispose() {
+    _hScrollController.dispose();
+    _vScrollController.dispose();
+    super.dispose();
+  }
+
+  void _setZoom(double z) => setState(() => _zoom = z.clamp(_minZoom, _maxZoom));
+
+  void _initEditableState(AnalyzeResult result) {
+    var nextId = 0;
+    final markers = <_EditableMarker>[];
+    for (final c in result.course.controls) {
+      markers.add(_EditableMarker(id: nextId++, kind: _MarkerKind.control, x: c.x, y: c.y, radius: c.radius, code: c.code));
+    }
+    final start = result.course.start;
+    if (start != null) {
+      markers.add(_EditableMarker(id: nextId++, kind: _MarkerKind.start, x: start.x, y: start.y));
+    }
+    final finish = result.course.finish;
+    if (finish != null) {
+      markers.add(_EditableMarker(id: nextId++, kind: _MarkerKind.finish, x: finish.x, y: finish.y));
+    }
+    final polygons = <_EditablePolygon>[];
+    for (final classPolys in result.segmentation.polygonsByClass) {
+      for (final poly in classPolys.polygons) {
+        polygons.add(_EditablePolygon(id: nextId++, className: classPolys.className, points: poly.points));
+      }
+    }
+    _markers = markers;
+    _polygons = polygons;
+    _nextEditId = nextId;
+    _editMode = false;
+    _tool = _EditTool.moveDelete;
+    _selectedMarkerId = null;
+    _draggingMarkerId = null;
+    _zoom = 1.0;
+  }
+
+  /// Nearest marker whose hit radius contains `p` (image-space pixels),
+  /// closest first -- a fixed minimum touch radius on top of the marker's
+  /// own drawn radius, since a printed control circle can be a few px on a
+  /// downscaled photo, too small to reliably tap otherwise.
+  _EditableMarker? _markerAt(Offset p) {
+    _EditableMarker? best;
+    var bestD = double.infinity;
+    for (final m in _markers) {
+      final r = m.radius + 14.0;
+      final d = (Offset(m.x, m.y) - p).distance;
+      if (d <= r && d < bestD) {
+        best = m;
+        bestD = d;
+      }
+    }
+    return best;
+  }
+
+  // Ray-casting point-in-polygon test on the (possibly self-intersecting,
+  // draft-quality) simplified pixel-contour rings this pipeline produces --
+  // good enough to pick "which polygon did the user tap", not a claim of
+  // exact polygon validity (see segmentation.rs's module doc on why this
+  // port doesn't carry a real polygon-validity concept).
+  bool _pointInPolygon(Offset p, List<Pt> points) {
+    var inside = false;
+    for (var i = 0, j = points.length - 1; i < points.length; j = i++) {
+      final pi = points[i], pj = points[j];
+      final intersects = ((pi.y > p.dy) != (pj.y > p.dy)) &&
+          (p.dx < (pj.x - pi.x) * (p.dy - pi.y) / (pj.y - pi.y) + pi.x);
+      if (intersects) inside = !inside;
+    }
+    return inside;
+  }
+
+  _EditablePolygon? _polygonAt(Offset p) {
+    for (final poly in _polygons.reversed) {
+      if (poly.points.length >= 3 && _pointInPolygon(p, poly.points)) return poly;
+    }
+    return null;
+  }
+
+  /// A manually-added control needs to *look* like a real one, not a fixed
+  /// small dot -- detected radii come from HoughCircles on a diagonal-scaled
+  /// range (`course_detection.rs::detect_controls`, roughly 0.6%-2% of the
+  /// image diagonal) and are routinely 20-70px on a ~3000px-wide working
+  /// image, so a flat 10px default read as suspiciously tiny next to them.
+  /// Match whatever real detected controls on *this* photo look like when
+  /// there are any; only fall back to the diagonal-based estimate (the
+  /// midpoint of that same Hough range) when there's nothing to match yet.
+  double _defaultControlRadius() {
+    final detected = _markers.where((m) => m.kind == _MarkerKind.control).toList();
+    if (detected.isNotEmpty) {
+      return detected.map((m) => m.radius).reduce((a, b) => a + b) / detected.length;
+    }
+    final result = _result;
+    if (result != null) {
+      final diag = sqrt((result.width * result.width + result.height * result.height).toDouble());
+      // Midpoint of detect_controls' own minRadius/maxRadius fractions (0.6%/2% of diagonal).
+      return diag * 0.013;
+    }
+    return 25.0;
+  }
+
+  void _handleTapUp(Offset imagePt) {
+    if (!_editMode) return;
+    switch (_tool) {
+      case _EditTool.addMarker:
+        setState(() {
+          final markers = _markers.toList();
+          // start/finish are singular markers -- adding a new one replaces
+          // whichever one already existed rather than creating a second.
+          if (_addKind != _MarkerKind.control) {
+            markers.removeWhere((m) => m.kind == _addKind);
+          }
+          final radius = _addKind == _MarkerKind.control ? _defaultControlRadius() : 10.0;
+          markers.add(_EditableMarker(id: _nextEditId++, kind: _addKind, x: imagePt.dx, y: imagePt.dy, radius: radius));
+          _markers = markers;
+        });
+      case _EditTool.moveDelete:
+        setState(() => _selectedMarkerId = _markerAt(imagePt)?.id);
+      case _EditTool.recolor:
+        final poly = _polygonAt(imagePt);
+        if (poly != null) {
+          setState(() {
+            _polygons = _polygons.map((p) => p.id == poly.id ? p.recolored(_recolorTarget) : p).toList();
+          });
+        }
+    }
+  }
+
+  void _handlePanStart(Offset imagePt) {
+    if (!_editMode || _tool != _EditTool.moveDelete) return;
+    final hit = _markerAt(imagePt);
+    if (hit != null) {
+      setState(() {
+        _draggingMarkerId = hit.id;
+        _selectedMarkerId = hit.id;
+      });
+    }
+  }
+
+  void _handlePanUpdate(Offset imagePt) {
+    final draggingId = _draggingMarkerId;
+    if (draggingId == null) return;
+    setState(() {
+      _markers = _markers.map((m) => m.id == draggingId ? m.moved(imagePt.dx, imagePt.dy) : m).toList();
+    });
+  }
+
+  void _handlePanEnd() {
+    _draggingMarkerId = null;
+  }
+
+  void _deleteSelectedMarker() {
+    final id = _selectedMarkerId;
+    if (id == null) return;
+    setState(() {
+      _markers = _markers.where((m) => m.id != id).toList();
+      _selectedMarkerId = null;
+    });
+  }
 
   Future<void> _pickAndAnalyze() async {
     final picked = await FilePicker.platform.pickFiles(
@@ -89,12 +334,70 @@ class _AnalyzeScreenState extends State<AnalyzeScreen> {
         houghParam2: _defaultHoughParam2,
         sourceFilename: filename,
       );
-      setState(() => _result = result);
+      setState(() {
+        _result = result;
+        _initEditableState(result);
+      });
     } catch (e) {
       setState(() => _error = e.toString());
     } finally {
       setState(() => _busy = false);
     }
+  }
+
+  /// Builds the corrected `SegmentationResult`/`CourseResult` from the
+  /// editable `_polygons`/`_markers` lists -- the manual-correction layer --
+  /// and asks Rust to rebuild the GeoJSON from them via `rebuildGeojson`
+  /// (see that function's doc comment for why route/terrain-breakdown pass
+  /// through unchanged). `scale_to_original_photo` isn't carried on
+  /// `AnalyzeResult` itself (only baked into the original `geojson` string at
+  /// analysis time), so it's read back out of that string rather than
+  /// duplicating the field on the Rust side for one export-time value.
+  _EditableMarker? _firstMarkerOf(_MarkerKind kind) {
+    for (final m in _markers) {
+      if (m.kind == kind) return m;
+    }
+    return null;
+  }
+
+  Future<String> _correctedGeojson(AnalyzeResult result) async {
+    final byClass = <String, List<Polygon>>{};
+    for (final p in _polygons) {
+      byClass.putIfAbsent(p.className, () => []).add(Polygon(points: p.points));
+    }
+    final segmentation = SegmentationResult(
+      polygonsByClass: byClass.entries.map((e) => ClassPolygons(className: e.key, polygons: e.value)).toList(),
+      paths: result.segmentation.paths,
+    );
+
+    final controls = _markers
+        .where((m) => m.kind == _MarkerKind.control)
+        .map((m) => Control(x: m.x, y: m.y, radius: m.radius, code: m.code))
+        .toList();
+    final start = _firstMarkerOf(_MarkerKind.start);
+    final finish = _firstMarkerOf(_MarkerKind.finish);
+    final course = CourseResult(
+      controls: controls,
+      start: start == null ? null : Pt(x: start.x, y: start.y),
+      finish: finish == null ? null : Pt(x: finish.x, y: finish.y),
+      legs: result.course.legs,
+    );
+
+    final originalProps = (jsonDecode(result.geojson) as Map<String, dynamic>)['properties'] as Map<String, dynamic>;
+    final scaleToOriginal = (originalProps['scale_to_original_photo'] as num).toDouble();
+
+    return rebuildGeojson(
+      segmentation: segmentation,
+      course: course,
+      route: result.route,
+      routeTerrainBreakdown: result.routeTerrainBreakdown,
+      width: result.width,
+      height: result.height,
+      scaleToOriginal: scaleToOriginal,
+      mnLineSpacingPx: result.mnLineSpacingPx,
+      quadFound: result.quadFound,
+      sourceFilename: _sourceFilename ?? '',
+    );
   }
 
   Future<void> _saveGeoJson() async {
@@ -108,7 +411,8 @@ class _AnalyzeScreenState extends State<AnalyzeScreen> {
       allowedExtensions: ['geojson'],
     );
     if (path == null) return;
-    await File(path).writeAsString(result.geojson);
+    final geojson = await _correctedGeojson(result);
+    await File(path).writeAsString(geojson);
   }
 
   @override
@@ -165,14 +469,37 @@ class _AnalyzeScreenState extends State<AnalyzeScreen> {
                 Row(
                   mainAxisSize: MainAxisSize.min,
                   children: [
-                    Text('GeoJSON: ${result.geojson.length} bytes'),
+                    Text('GeoJSON: ${result.geojson.length} bytes (raw detection)'),
                     const SizedBox(width: 8),
-                    TextButton(onPressed: _saveGeoJson, child: const Text('Save GeoJSON...')),
+                    TextButton(onPressed: _saveGeoJson, child: const Text('Save GeoJSON (with corrections)...')),
                   ],
                 ),
                 const SizedBox(height: 12),
+                _EditToolbar(
+                  editMode: _editMode,
+                  tool: _tool,
+                  addKind: _addKind,
+                  recolorTarget: _recolorTarget,
+                  hasSelection: _selectedMarkerId != null,
+                  onToggleEditMode: () => setState(() {
+                    _editMode = !_editMode;
+                    _selectedMarkerId = null;
+                  }),
+                  onToolChanged: (t) => setState(() {
+                    _tool = t;
+                    _selectedMarkerId = null;
+                  }),
+                  onAddKindChanged: (k) => setState(() => _addKind = k),
+                  onRecolorTargetChanged: (c) => setState(() => _recolorTarget = c),
+                  onDeleteSelected: _deleteSelectedMarker,
+                ),
+                const SizedBox(height: 12),
                 _LayerFilterBar(
-                  result: result,
+                  polygons: _polygons,
+                  markers: _markers,
+                  pathCount: result.segmentation.paths.length,
+                  legCount: result.course.legs.length,
+                  hasRoute: result.route != null,
                   hiddenLayers: _hiddenLayers,
                   minPolygonAreaPx: _minPolygonAreaPx,
                   onToggleLayer: (key) => setState(() {
@@ -183,35 +510,131 @@ class _AnalyzeScreenState extends State<AnalyzeScreen> {
                   onMinAreaChanged: (v) => setState(() => _minPolygonAreaPx = v),
                 ),
                 const SizedBox(height: 12),
+                Row(
+                  mainAxisSize: MainAxisSize.min,
+                  children: [
+                    IconButton(
+                      tooltip: 'Zoom out',
+                      icon: const Icon(Icons.zoom_out),
+                      onPressed: _zoom > _minZoom ? () => _setZoom(_zoom / 1.25) : null,
+                    ),
+                    SizedBox(width: 56, child: Text('${(_zoom * 100).round()}%', textAlign: TextAlign.center)),
+                    IconButton(
+                      tooltip: 'Zoom in',
+                      icon: const Icon(Icons.zoom_in),
+                      onPressed: _zoom < _maxZoom ? () => _setZoom(_zoom * 1.25) : null,
+                    ),
+                    TextButton(onPressed: () => _setZoom(1.0), child: const Text('Reset')),
+                    const SizedBox(width: 8),
+                    const Text(
+                      'Ctrl + scroll wheel also zooms; scrollbars/trackpad pan when zoomed in.',
+                      style: TextStyle(fontSize: 12, color: Colors.black54),
+                    ),
+                  ],
+                ),
+                const SizedBox(height: 8),
                 LayoutBuilder(
                   builder: (context, constraints) {
                     // The working-resolution image (up to ~3000px wide) is
-                    // routinely wider than the window, so it must be
-                    // downscaled to fit. Image.memory does that on its own
-                    // (via its default BoxFit.scaleDown) whenever explicit
-                    // width/height are smaller than the source, but
+                    // routinely wider than the window, so it's downscaled to
+                    // fit by default (`baseScale`) -- Image.memory does that
+                    // on its own (via its default BoxFit.scaleDown) whenever
+                    // explicit width/height are smaller than the source, but
                     // CustomPaint does NOT rescale its drawing commands to
                     // match a shrunk canvas -- painting with raw
                     // full-resolution coordinates against a shrunk canvas is
                     // exactly what made the overlay drift away from the
-                    // image. Computing one shared `scale` here and applying
-                    // it to both the displayed image size AND the painter's
-                    // canvas transform (see _AnalysisOverlayPainter.paint)
-                    // keeps them in lockstep at any window size.
-                    final scale = (constraints.maxWidth / result.width).clamp(0.0, 1.0);
+                    // image. Computing one shared `scale` here (fit scale
+                    // times the user's zoom level) and applying it to both
+                    // the displayed image size AND the painter's canvas
+                    // transform (see _AnalysisOverlayPainter.paint) keeps
+                    // them in lockstep at any window size or zoom level.
+                    final baseScale = (constraints.maxWidth / result.width).clamp(0.0, 1.0);
+                    final scale = baseScale * _zoom;
                     final displayWidth = result.width * scale;
                     final displayHeight = result.height * scale;
-                    return SizedBox(
-                      width: displayWidth,
-                      height: displayHeight,
-                      child: Stack(
-                        children: [
-                          Image.memory(result.imagePng, width: displayWidth, height: displayHeight),
-                          CustomPaint(
-                            size: Size(displayWidth, displayHeight),
-                            painter: _AnalysisOverlayPainter(result, scale, _hiddenLayers, _minPolygonAreaPx),
+                    // Gesture coordinates come in display (scaled) space;
+                    // dividing by `scale` converts them back to the native
+                    // image-pixel space every editable marker/polygon is
+                    // stored in, same convention the painter itself un-scales
+                    // via `canvas.scale(scale)` below.
+                    Offset toImageSpace(Offset local) => scale > 0 ? local / scale : local;
+                    final viewportHeight = min(700.0, MediaQuery.sizeOf(context).height * 0.7);
+                    return Listener(
+                      // Ctrl+wheel zooms (centered on the cursor is a nice-to-
+                      // have skipped here, plain zoom is enough); a plain
+                      // wheel/trackpad scroll is left alone so it keeps
+                      // scrolling the nested scroll views below instead.
+                      onPointerSignal: (event) {
+                        if (event is PointerScrollEvent && HardwareKeyboard.instance.isControlPressed) {
+                          _setZoom(_zoom * (event.scrollDelta.dy < 0 ? 1.1 : 1 / 1.1));
+                        }
+                      },
+                      child: SizedBox(
+                        height: viewportHeight,
+                        child: Scrollbar(
+                          controller: _vScrollController,
+                          thumbVisibility: true,
+                          notificationPredicate: (n) => n.depth == 0,
+                          child: SingleChildScrollView(
+                            controller: _vScrollController,
+                            child: Scrollbar(
+                              controller: _hScrollController,
+                              thumbVisibility: true,
+                              notificationPredicate: (n) => n.depth == 0,
+                              child: SingleChildScrollView(
+                                controller: _hScrollController,
+                                scrollDirection: Axis.horizontal,
+                                child: SizedBox(
+                                  width: displayWidth,
+                                  height: displayHeight,
+                                  child: GestureDetector(
+                                    behavior: HitTestBehavior.opaque,
+                                    onTapUp: (details) => _handleTapUp(toImageSpace(details.localPosition)),
+                                    onPanStart: (details) => _handlePanStart(toImageSpace(details.localPosition)),
+                                    onPanUpdate: (details) => _handlePanUpdate(toImageSpace(details.localPosition)),
+                                    onPanEnd: (_) => _handlePanEnd(),
+                                    child: Stack(
+                                      children: [
+                                        // `fit: BoxFit.fill` is required, not cosmetic: the default
+                                        // `BoxFit.scaleDown` never scales *up* past the image's native
+                                        // pixel size, so once zoom pushes displayWidth/Height past
+                                        // result.width/height, the bitmap would stop growing and sit
+                                        // centered inside a box that keeps growing -- while CustomPaint's
+                                        // `canvas.scale` below has no such cap and keeps scaling the
+                                        // overlay correctly, which is exactly what made the two drift
+                                        // apart (worse away from center, i.e. toward the sheet's edges).
+                                        // width/height here are already the exact target box, so `fill`
+                                        // (vs. `contain`) is safe: aspect ratio is preserved by construction
+                                        // since both dimensions come from the same `scale` factor.
+                                        Image.memory(
+                                          result.imagePng,
+                                          width: displayWidth,
+                                          height: displayHeight,
+                                          fit: BoxFit.fill,
+                                        ),
+                                        CustomPaint(
+                                          size: Size(displayWidth, displayHeight),
+                                          painter: _AnalysisOverlayPainter(
+                                            polygons: _polygons,
+                                            markers: _markers,
+                                            paths: result.segmentation.paths,
+                                            legs: result.course.legs,
+                                            route: result.route,
+                                            selectedMarkerId: _selectedMarkerId,
+                                            scale: scale,
+                                            hiddenLayers: _hiddenLayers,
+                                            minPolygonAreaPx: _minPolygonAreaPx,
+                                          ),
+                                        ),
+                                      ],
+                                    ),
+                                  ),
+                                ),
+                              ),
+                            ),
                           ),
-                        ],
+                        ),
                       ),
                     );
                   },
@@ -267,14 +690,22 @@ class _Legend extends StatelessWidget {
 /// not just real trails), and toggling layers on/off is how to tell "is this
 /// real signal or clutter" without re-running the CV pipeline.
 class _LayerFilterBar extends StatelessWidget {
-  final AnalyzeResult result;
+  final List<_EditablePolygon> polygons;
+  final List<_EditableMarker> markers;
+  final int pathCount;
+  final int legCount;
+  final bool hasRoute;
   final Set<String> hiddenLayers;
   final double minPolygonAreaPx;
   final void Function(String key) onToggleLayer;
   final void Function(double value) onMinAreaChanged;
 
   const _LayerFilterBar({
-    required this.result,
+    required this.polygons,
+    required this.markers,
+    required this.pathCount,
+    required this.legCount,
+    required this.hasRoute,
     required this.hiddenLayers,
     required this.minPolygonAreaPx,
     required this.onToggleLayer,
@@ -284,18 +715,15 @@ class _LayerFilterBar extends StatelessWidget {
   int _countFor(String key) {
     switch (key) {
       case 'paths':
-        return result.segmentation.paths.length;
+        return pathCount;
       case 'legs':
-        return result.course.legs.length;
+        return legCount;
       case 'controls':
-        return result.course.controls.length;
+        return markers.where((m) => m.kind == _MarkerKind.control).length;
       case 'route':
-        return result.route == null ? 0 : 1;
+        return hasRoute ? 1 : 0;
       default:
-        return result.segmentation.polygonsByClass
-            .firstWhere((c) => c.className == key, orElse: () => const ClassPolygons(className: '', polygons: []))
-            .polygons
-            .length;
+        return polygons.where((p) => p.className == key).length;
     }
   }
 
@@ -346,14 +774,149 @@ class _LayerFilterBar extends StatelessWidget {
   }
 }
 
+/// The manual-correction toolbar: `prompt.txt`'s hard requirement, not a
+/// nice-to-have (see CLAUDE.md/PHASE0_HANDOFF.md -- nothing in this repo
+/// implemented this before now). Three tools, deliberately not a single
+/// mixed-mode canvas: move/delete (tap-select + drag, then a delete button),
+/// add a marker (pick a kind, then tap to place), and recolor (pick a target
+/// terrain class, then tap a polygon to reassign it) -- each tap only ever
+/// does one unambiguous thing per tool, rather than trying to infer "did the
+/// user mean add/move/recolor" from a single universal gesture.
+class _EditToolbar extends StatelessWidget {
+  final bool editMode;
+  final _EditTool tool;
+  final _MarkerKind addKind;
+  final String recolorTarget;
+  final bool hasSelection;
+  final VoidCallback onToggleEditMode;
+  final void Function(_EditTool tool) onToolChanged;
+  final void Function(_MarkerKind kind) onAddKindChanged;
+  final void Function(String className) onRecolorTargetChanged;
+  final VoidCallback onDeleteSelected;
+
+  const _EditToolbar({
+    required this.editMode,
+    required this.tool,
+    required this.addKind,
+    required this.recolorTarget,
+    required this.hasSelection,
+    required this.onToggleEditMode,
+    required this.onToolChanged,
+    required this.onAddKindChanged,
+    required this.onRecolorTargetChanged,
+    required this.onDeleteSelected,
+  });
+
+  @override
+  Widget build(BuildContext context) {
+    return Column(
+      crossAxisAlignment: CrossAxisAlignment.start,
+      children: [
+        Row(
+          mainAxisSize: MainAxisSize.min,
+          children: [
+            FilterChip(
+              label: const Text('Manual correction'),
+              avatar: const Icon(Icons.edit, size: 18),
+              selected: editMode,
+              onSelected: (_) => onToggleEditMode(),
+            ),
+            if (!editMode) ...[
+              const SizedBox(width: 8),
+              const Text(
+                'add/move/delete controls, recolor terrain -- prompt.txt\'s mandatory correction layer',
+                style: TextStyle(fontStyle: FontStyle.italic, fontSize: 12),
+              ),
+            ],
+          ],
+        ),
+        if (editMode) ...[
+          const SizedBox(height: 8),
+          Wrap(
+            spacing: 8,
+            runSpacing: 8,
+            crossAxisAlignment: WrapCrossAlignment.center,
+            children: [
+              SegmentedButton<_EditTool>(
+                segments: const [
+                  ButtonSegment(value: _EditTool.moveDelete, label: Text('Move / delete'), icon: Icon(Icons.open_with)),
+                  ButtonSegment(value: _EditTool.addMarker, label: Text('Add marker'), icon: Icon(Icons.add_location_alt)),
+                  ButtonSegment(value: _EditTool.recolor, label: Text('Recolor area'), icon: Icon(Icons.format_color_fill)),
+                ],
+                selected: {tool},
+                onSelectionChanged: (s) => onToolChanged(s.first),
+              ),
+              if (tool == _EditTool.moveDelete)
+                IconButton(
+                  tooltip: 'Delete selected marker',
+                  icon: const Icon(Icons.delete),
+                  onPressed: hasSelection ? onDeleteSelected : null,
+                ),
+              if (tool == _EditTool.addMarker)
+                DropdownButton<_MarkerKind>(
+                  value: addKind,
+                  items: const [
+                    DropdownMenuItem(value: _MarkerKind.control, child: Text('Control')),
+                    DropdownMenuItem(value: _MarkerKind.start, child: Text('Start (replaces existing)')),
+                    DropdownMenuItem(value: _MarkerKind.finish, child: Text('Finish (replaces existing)')),
+                  ],
+                  onChanged: (k) => k != null ? onAddKindChanged(k) : null,
+                ),
+              if (tool == _EditTool.recolor)
+                DropdownButton<String>(
+                  value: recolorTarget,
+                  items: _terrainLayerKeys
+                      .map((k) => DropdownMenuItem(value: k, child: Text(k)))
+                      .toList(),
+                  onChanged: (c) => c != null ? onRecolorTargetChanged(c) : null,
+                ),
+            ],
+          ),
+          const SizedBox(height: 4),
+          Text(
+            switch (tool) {
+              _EditTool.moveDelete => 'Tap a marker to select it, drag to move it, or delete it with the trash button.',
+              _EditTool.addMarker => 'Tap anywhere on the map to place a new $_addKindLabel.',
+              _EditTool.recolor => 'Tap a terrain polygon to reclassify it as "$recolorTarget".',
+            },
+            style: const TextStyle(fontSize: 12, color: Colors.black54),
+          ),
+        ],
+      ],
+    );
+  }
+
+  String get _addKindLabel => switch (addKind) {
+        _MarkerKind.control => 'control',
+        _MarkerKind.start => 'start',
+        _MarkerKind.finish => 'finish',
+      };
+}
+
 class _AnalysisOverlayPainter extends CustomPainter {
-  final AnalyzeResult result;
+  final List<_EditablePolygon> polygons;
+  final List<_EditableMarker> markers;
+  final List<Segment> paths;
+  final List<Segment> legs;
+  final RouteResult? route;
+  final int? selectedMarkerId;
   /// Display size / native image size -- see the `LayoutBuilder` above for
   /// why this must be applied here too, not just to the displayed image.
   final double scale;
   final Set<String> hiddenLayers;
   final double minPolygonAreaPx;
-  _AnalysisOverlayPainter(this.result, this.scale, this.hiddenLayers, this.minPolygonAreaPx);
+
+  _AnalysisOverlayPainter({
+    required this.polygons,
+    required this.markers,
+    required this.paths,
+    required this.legs,
+    required this.route,
+    required this.selectedMarkerId,
+    required this.scale,
+    required this.hiddenLayers,
+    required this.minPolygonAreaPx,
+  });
 
   static const Map<String, Color> _classColors = {
     'water': Colors.blue,
@@ -395,9 +958,11 @@ class _AnalysisOverlayPainter extends CustomPainter {
     canvas.scale(scale);
     double w(double screenPx) => scale > 0 ? screenPx / scale : screenPx;
 
-    for (final classPolys in result.segmentation.polygonsByClass) {
-      if (hiddenLayers.contains(classPolys.className)) continue;
-      final color = _classColors[classPolys.className] ?? Colors.green.shade900;
+    for (final polygon in polygons) {
+      if (hiddenLayers.contains(polygon.className)) continue;
+      if (polygon.points.length < 2) continue;
+      if (_polygonArea(polygon.points) < minPolygonAreaPx) continue;
+      final color = _classColors[polygon.className] ?? Colors.green.shade900;
       final fillPaint = Paint()
         ..color = color.withValues(alpha: 0.35)
         ..style = PaintingStyle.fill;
@@ -405,21 +970,17 @@ class _AnalysisOverlayPainter extends CustomPainter {
         ..color = color
         ..style = PaintingStyle.stroke
         ..strokeWidth = w(1.5);
-      for (final polygon in classPolys.polygons) {
-        if (polygon.points.length < 2) continue;
-        if (_polygonArea(polygon.points) < minPolygonAreaPx) continue;
-        final path = Path()..moveTo(polygon.points.first.x, polygon.points.first.y);
-        for (final p in polygon.points.skip(1)) {
-          path.lineTo(p.x, p.y);
-        }
-        path.close();
-        // Filled first: a thin outline alone is easy to miss against a busy
-        // printed map background -- a translucent fill makes "this whole
-        // area was classified as X" visible at a glance, which is what was
-        // actually missing before, not just a color choice.
-        canvas.drawPath(path, fillPaint);
-        canvas.drawPath(path, strokePaint);
+      final path = Path()..moveTo(polygon.points.first.x, polygon.points.first.y);
+      for (final p in polygon.points.skip(1)) {
+        path.lineTo(p.x, p.y);
       }
+      path.close();
+      // Filled first: a thin outline alone is easy to miss against a busy
+      // printed map background -- a translucent fill makes "this whole
+      // area was classified as X" visible at a glance, which is what was
+      // actually missing before, not just a color choice.
+      canvas.drawPath(path, fillPaint);
+      canvas.drawPath(path, strokePaint);
     }
 
     // Paths were drawn in black before, which is nearly invisible against
@@ -431,7 +992,7 @@ class _AnalysisOverlayPainter extends CustomPainter {
         ..color = Colors.cyanAccent.shade700
         ..strokeWidth = w(2.5)
         ..strokeCap = StrokeCap.round;
-      for (final seg in result.segmentation.paths) {
+      for (final seg in paths) {
         canvas.drawLine(_pt(seg.a), _pt(seg.b), pathPaint);
       }
     }
@@ -441,42 +1002,63 @@ class _AnalysisOverlayPainter extends CustomPainter {
         ..color = Colors.orange
         ..strokeWidth = w(2.5)
         ..strokeCap = StrokeCap.round;
-      for (final leg in result.course.legs) {
+      for (final leg in legs) {
         canvas.drawLine(_pt(leg.a), _pt(leg.b), legPaint);
       }
     }
 
     if (!hiddenLayers.contains('controls')) {
-      final controlPaint = Paint()
-        ..color = Colors.red
-        ..style = PaintingStyle.stroke
-        ..strokeWidth = w(3.0);
-      for (final c in result.course.controls) {
-        canvas.drawCircle(Offset(c.x, c.y), c.radius, controlPaint);
-      }
-
-      final markerPaint = Paint()
-        ..color = Colors.red
-        ..style = PaintingStyle.fill;
-      final start = result.course.start;
-      if (start != null) {
-        canvas.drawPath(_trianglePath(_pt(start), w(20)), markerPaint);
-      }
-      final finish = result.course.finish;
-      if (finish != null) {
-        canvas.drawCircle(_pt(finish), w(14), markerPaint);
+      for (final m in markers) {
+        final isSelected = m.id == selectedMarkerId;
+        final markerColor = isSelected ? Colors.blueAccent : Colors.red;
+        switch (m.kind) {
+          case _MarkerKind.control:
+            canvas.drawCircle(
+              Offset(m.x, m.y),
+              m.radius,
+              Paint()
+                ..color = markerColor
+                ..style = PaintingStyle.stroke
+                ..strokeWidth = w(isSelected ? 4.5 : 3.0),
+            );
+          case _MarkerKind.start:
+            canvas.drawPath(
+              _trianglePath(Offset(m.x, m.y), w(20)),
+              Paint()
+                ..color = markerColor
+                ..style = PaintingStyle.fill,
+            );
+          case _MarkerKind.finish:
+            canvas.drawCircle(
+              Offset(m.x, m.y),
+              w(14),
+              Paint()
+                ..color = markerColor
+                ..style = PaintingStyle.fill,
+            );
+        }
+        if (isSelected) {
+          canvas.drawCircle(
+            Offset(m.x, m.y),
+            w(m.kind == _MarkerKind.control ? m.radius + 10 : 24),
+            Paint()
+              ..color = Colors.blueAccent
+              ..style = PaintingStyle.stroke
+              ..strokeWidth = w(1.5),
+          );
+        }
       }
     }
 
-    final route = result.route;
-    if (!hiddenLayers.contains('route') && route != null && route.points.length >= 2) {
+    final routeValue = route;
+    if (!hiddenLayers.contains('route') && routeValue != null && routeValue.points.length >= 2) {
       final routePaint = Paint()
         ..color = Colors.yellow.shade700
         ..style = PaintingStyle.stroke
         ..strokeWidth = w(4.0)
         ..strokeCap = StrokeCap.round;
-      final path = Path()..moveTo(route.points.first.x, route.points.first.y);
-      for (final p in route.points.skip(1)) {
+      final path = Path()..moveTo(routeValue.points.first.x, routeValue.points.first.y);
+      for (final p in routeValue.points.skip(1)) {
         path.lineTo(p.x, p.y);
       }
       canvas.drawPath(path, routePaint);
@@ -493,7 +1075,9 @@ class _AnalysisOverlayPainter extends CustomPainter {
 
   @override
   bool shouldRepaint(covariant _AnalysisOverlayPainter oldDelegate) =>
-      oldDelegate.result != result ||
+      !identical(oldDelegate.polygons, polygons) ||
+      !identical(oldDelegate.markers, markers) ||
+      oldDelegate.selectedMarkerId != selectedMarkerId ||
       oldDelegate.scale != scale ||
       oldDelegate.hiddenLayers != hiddenLayers ||
       oldDelegate.minPolygonAreaPx != minPolygonAreaPx;

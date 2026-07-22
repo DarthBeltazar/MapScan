@@ -73,7 +73,7 @@ class RustLib extends BaseEntrypoint<RustLibApi, RustLibApiImpl, RustLibWire> {
   String get codegenVersion => '2.12.0';
 
   @override
-  int get rustContentHash => -1223567005;
+  int get rustContentHash => 1167126195;
 
   static const kDefaultExternalLibraryLoaderConfig =
       ExternalLibraryLoaderConfig(
@@ -97,6 +97,19 @@ abstract class RustLibApi extends BaseApi {
   String crateApiSimpleGreet({required String name});
 
   Future<void> crateApiSimpleInitApp();
+
+  Future<String> crateApiAnalyzeRebuildGeojson({
+    required SegmentationResult segmentation,
+    required CourseResult course,
+    RouteResult? route,
+    required List<TerrainFraction> routeTerrainBreakdown,
+    required int width,
+    required int height,
+    required double scaleToOriginal,
+    double? mnLineSpacingPx,
+    required bool quadFound,
+    required String sourceFilename,
+  });
 
   Future<RectifyResult> crateApiPreprocessingRectifyPhoto({
     required List<int> imageBytes,
@@ -227,6 +240,79 @@ class RustLibApiImpl extends RustLibApiImplPlatform implements RustLibApi {
       const TaskConstMeta(debugName: "init_app", argNames: []);
 
   @override
+  Future<String> crateApiAnalyzeRebuildGeojson({
+    required SegmentationResult segmentation,
+    required CourseResult course,
+    RouteResult? route,
+    required List<TerrainFraction> routeTerrainBreakdown,
+    required int width,
+    required int height,
+    required double scaleToOriginal,
+    double? mnLineSpacingPx,
+    required bool quadFound,
+    required String sourceFilename,
+  }) {
+    return handler.executeNormal(
+      NormalTask(
+        callFfi: (port_) {
+          final serializer = SseSerializer(generalizedFrbRustBinding);
+          sse_encode_box_autoadd_segmentation_result(segmentation, serializer);
+          sse_encode_box_autoadd_course_result(course, serializer);
+          sse_encode_opt_box_autoadd_route_result(route, serializer);
+          sse_encode_list_terrain_fraction(routeTerrainBreakdown, serializer);
+          sse_encode_i_32(width, serializer);
+          sse_encode_i_32(height, serializer);
+          sse_encode_f_32(scaleToOriginal, serializer);
+          sse_encode_opt_box_autoadd_f_32(mnLineSpacingPx, serializer);
+          sse_encode_bool(quadFound, serializer);
+          sse_encode_String(sourceFilename, serializer);
+          pdeCallFfi(
+            generalizedFrbRustBinding,
+            serializer,
+            funcId: 5,
+            port: port_,
+          );
+        },
+        codec: SseCodec(
+          decodeSuccessData: sse_decode_String,
+          decodeErrorData: null,
+        ),
+        constMeta: kCrateApiAnalyzeRebuildGeojsonConstMeta,
+        argValues: [
+          segmentation,
+          course,
+          route,
+          routeTerrainBreakdown,
+          width,
+          height,
+          scaleToOriginal,
+          mnLineSpacingPx,
+          quadFound,
+          sourceFilename,
+        ],
+        apiImpl: this,
+      ),
+    );
+  }
+
+  TaskConstMeta get kCrateApiAnalyzeRebuildGeojsonConstMeta =>
+      const TaskConstMeta(
+        debugName: "rebuild_geojson",
+        argNames: [
+          "segmentation",
+          "course",
+          "route",
+          "routeTerrainBreakdown",
+          "width",
+          "height",
+          "scaleToOriginal",
+          "mnLineSpacingPx",
+          "quadFound",
+          "sourceFilename",
+        ],
+      );
+
+  @override
   Future<RectifyResult> crateApiPreprocessingRectifyPhoto({
     required List<int> imageBytes,
   }) {
@@ -238,7 +324,7 @@ class RustLibApiImpl extends RustLibApiImplPlatform implements RustLibApi {
           pdeCallFfi(
             generalizedFrbRustBinding,
             serializer,
-            funcId: 5,
+            funcId: 6,
             port: port_,
           );
         },
@@ -290,6 +376,12 @@ class RustLibApiImpl extends RustLibApiImplPlatform implements RustLibApi {
   }
 
   @protected
+  CourseResult dco_decode_box_autoadd_course_result(dynamic raw) {
+    // Codec=Dco (DartCObject based), see doc to use other codecs
+    return dco_decode_course_result(raw);
+  }
+
+  @protected
   double dco_decode_box_autoadd_f_32(dynamic raw) {
     // Codec=Dco (DartCObject based), see doc to use other codecs
     return raw as double;
@@ -305,6 +397,12 @@ class RustLibApiImpl extends RustLibApiImplPlatform implements RustLibApi {
   RouteResult dco_decode_box_autoadd_route_result(dynamic raw) {
     // Codec=Dco (DartCObject based), see doc to use other codecs
     return dco_decode_route_result(raw);
+  }
+
+  @protected
+  SegmentationResult dco_decode_box_autoadd_segmentation_result(dynamic raw) {
+    // Codec=Dco (DartCObject based), see doc to use other codecs
+    return dco_decode_segmentation_result(raw);
   }
 
   @protected
@@ -601,6 +699,14 @@ class RustLibApiImpl extends RustLibApiImplPlatform implements RustLibApi {
   }
 
   @protected
+  CourseResult sse_decode_box_autoadd_course_result(
+    SseDeserializer deserializer,
+  ) {
+    // Codec=Sse (Serialization based), see doc to use other codecs
+    return (sse_decode_course_result(deserializer));
+  }
+
+  @protected
   double sse_decode_box_autoadd_f_32(SseDeserializer deserializer) {
     // Codec=Sse (Serialization based), see doc to use other codecs
     return (sse_decode_f_32(deserializer));
@@ -618,6 +724,14 @@ class RustLibApiImpl extends RustLibApiImplPlatform implements RustLibApi {
   ) {
     // Codec=Sse (Serialization based), see doc to use other codecs
     return (sse_decode_route_result(deserializer));
+  }
+
+  @protected
+  SegmentationResult sse_decode_box_autoadd_segmentation_result(
+    SseDeserializer deserializer,
+  ) {
+    // Codec=Sse (Serialization based), see doc to use other codecs
+    return (sse_decode_segmentation_result(deserializer));
   }
 
   @protected
@@ -954,6 +1068,15 @@ class RustLibApiImpl extends RustLibApiImplPlatform implements RustLibApi {
   }
 
   @protected
+  void sse_encode_box_autoadd_course_result(
+    CourseResult self,
+    SseSerializer serializer,
+  ) {
+    // Codec=Sse (Serialization based), see doc to use other codecs
+    sse_encode_course_result(self, serializer);
+  }
+
+  @protected
   void sse_encode_box_autoadd_f_32(double self, SseSerializer serializer) {
     // Codec=Sse (Serialization based), see doc to use other codecs
     sse_encode_f_32(self, serializer);
@@ -972,6 +1095,15 @@ class RustLibApiImpl extends RustLibApiImplPlatform implements RustLibApi {
   ) {
     // Codec=Sse (Serialization based), see doc to use other codecs
     sse_encode_route_result(self, serializer);
+  }
+
+  @protected
+  void sse_encode_box_autoadd_segmentation_result(
+    SegmentationResult self,
+    SseSerializer serializer,
+  ) {
+    // Codec=Sse (Serialization based), see doc to use other codecs
+    sse_encode_segmentation_result(self, serializer);
   }
 
   @protected
